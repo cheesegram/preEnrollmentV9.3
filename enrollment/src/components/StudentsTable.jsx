@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import api from "../lib/axios";
@@ -132,6 +132,25 @@ function humanizeKey(key) {
 }
 
 const EXCLUDED_DETAIL_KEYS = ["_id", "__v", "password"];
+
+function getSubjectPrerequisites(subject) {
+  if (Array.isArray(subject?.prerequisites)) {
+    return subject.prerequisites.filter(Boolean).join(", ");
+  }
+
+  const prerequisites = String(subject?.prerequisites ?? "").trim();
+  if (prerequisites) return prerequisites;
+
+  const title = String(subject?.title ?? "");
+  const match = title.match(/\(\s*Pre\s*:\s*([^)]*)\)/i);
+  return match?.[1]?.trim() || "";
+}
+
+function getCurriculumPeriodLabel(year, semester) {
+  const yearLabel = String(year ?? "").trim();
+  const semesterLabel = Number(semester) === 1 ? "2nd Sem" : "1st Sem";
+  return `Year ${yearLabel} - ${semesterLabel}`;
+}
 
 function formatDetailValue(key, value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -321,6 +340,12 @@ function StudentsTable({
   const [subjectLoading, setSubjectLoading] = useState(false);
   const [subjectError, setSubjectError] = useState("");
   const [curriculumCache, setCurriculumCache] = useState({});
+  const [isCurriculumMapping, setIsCurriculumMapping] = useState(false);
+  const [curriculumMapping, setCurriculumMapping] = useState(null);
+  const mappingContainerRef = useRef(null);
+  const mappingSubjectRefs = useRef({});
+  const [curriculumMappingLines, setCurriculumMappingLines] = useState([]);
+  const [curriculumMappingSize, setCurriculumMappingSize] = useState({ width: 0, height: 0 });
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(initialPageSize);
 
@@ -385,6 +410,8 @@ function StudentsTable({
     setSelectedStudent(student);
     setSelectedSubjectView(view);
     setSelectedSubjectSubjects([]);
+    setIsCurriculumMapping(false);
+    setCurriculumMapping(null);
     setSubjectError("");
     setSubjectLoading(true);
 
@@ -496,7 +523,178 @@ function StudentsTable({
     setSelectedStudent(null);
     setSelectedSubjectView(null);
     setSelectedSubjectSubjects([]);
+    setIsCurriculumMapping(false);
+    setCurriculumMapping(null);
+    setCurriculumMappingLines([]);
     setSubjectError("");
+  };
+
+  useLayoutEffect(() => {
+    if (!isCurriculumMapping || !curriculumMapping?.length || !mappingContainerRef.current) {
+      setCurriculumMappingLines([]);
+      return undefined;
+    }
+
+    const updateMappingLines = () => {
+      const container = mappingContainerRef.current;
+      if (!container) return;
+
+      const containerRect = container.getBoundingClientRect();
+      setCurriculumMappingSize({ width: container.offsetWidth, height: container.offsetHeight });
+      const subjectsByCode = new Map();
+      Object.entries(mappingSubjectRefs.current).forEach(([code, anchor]) => {
+        if (anchor?.element) subjectsByCode.set(code, anchor);
+      });
+
+      const lines = [];
+      curriculumMapping.forEach((zone) => {
+        zone.columns.flatMap((column) => column.subjects).forEach((subject) => {
+          const subjectCode = String(subject.subject_code || subject.code || "").trim().toUpperCase();
+          const prerequisites = getSubjectPrerequisites(subject)
+            .split(/[,/]/)
+            .map((value) => value.trim().toUpperCase())
+            .filter(Boolean);
+          const targetAnchor = subjectsByCode.get(subjectCode);
+          if (!targetAnchor) return;
+
+          prerequisites.forEach((prerequisite) => {
+            const sourceAnchor = subjectsByCode.get(prerequisite);
+            if (!sourceAnchor || sourceAnchor.element === targetAnchor.element) return;
+
+            const sourceRect = sourceAnchor.element.getBoundingClientRect();
+            const targetRect = targetAnchor.element.getBoundingClientRect();
+            const startX = sourceRect.right - containerRect.left + 6;
+            const startY = sourceRect.top + sourceRect.height / 2 - containerRect.top;
+            const endX = targetRect.left - containerRect.left - 6;
+            const endY = targetRect.top + targetRect.height / 2 - containerRect.top;
+            const gap = Math.max(18, Math.abs(endX - startX) * 0.35);
+            const direction = endX >= startX ? 1 : -1;
+            const firstBendX = startX + gap * direction;
+            const secondBendX = endX - gap * direction;
+
+            lines.push({
+              id: `${prerequisite}-${subjectCode}`,
+              path: `M ${startX} ${startY} H ${firstBendX} V ${endY} H ${endX}`,
+              startX,
+              startY,
+              endX,
+              endY,
+              sourceZone: sourceAnchor.zone,
+              targetZone: targetAnchor.zone,
+              behindZones:
+                (sourceAnchor.zone === "Previous" && targetAnchor.zone === "Upcoming") ||
+                (sourceAnchor.zone === "Upcoming" && targetAnchor.zone === "Previous"),
+            });
+          });
+        });
+      });
+
+      setCurriculumMappingLines(lines);
+    };
+
+    updateMappingLines();
+    const resizeObserver = new ResizeObserver(updateMappingLines);
+    resizeObserver.observe(mappingContainerRef.current);
+    window.addEventListener("resize", updateMappingLines);
+    const scrollContainer = mappingContainerRef.current.closest(".overflow-y-auto");
+    scrollContainer?.addEventListener("scroll", updateMappingLines, { passive: true });
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateMappingLines);
+      scrollContainer?.removeEventListener("scroll", updateMappingLines);
+    };
+  }, [curriculumMapping, isCurriculumMapping]);
+
+  const handleCurriculumMappingToggle = async (enabled) => {
+    setIsCurriculumMapping(enabled);
+    if (!enabled || selectedSubjectView !== "curriculum" || !selectedStudent) return;
+
+    setSubjectLoading(true);
+    setSubjectError("");
+
+    try {
+      const yearNumber = Number(normalizeYearKey(selectedStudent.year)?.replace(/\D/g, ""));
+      const semesterIndex = getSemesterIndex(selectedStudent.semester);
+      if (!yearNumber || semesterIndex < 0) {
+        throw new Error("This view is unavailable for this student's year and semester.");
+      }
+
+      const getCurriculumDocument = async (year) => {
+        const yearKey = normalizeYearKey(year);
+        if (!yearKey) return null;
+        if (curriculumCache[yearKey]) return curriculumCache[yearKey];
+
+        const response = await api.get(`/curriculum/${yearKey}`);
+        const curriculumDoc = response.data;
+        setCurriculumCache((previous) => ({ ...previous, [yearKey]: curriculumDoc }));
+        return curriculumDoc;
+      };
+
+      const currentYearDocument = await getCurriculumDocument(yearNumber);
+      const upcomingYear = semesterIndex === 0 ? yearNumber : yearNumber + 1;
+      const upcomingSemester = semesterIndex === 0 ? 1 : 0;
+      const previousPeriods = [];
+
+      for (let year = 1; year <= yearNumber; year += 1) {
+        for (let semester = 0; semester < 2; semester += 1) {
+          if (year === yearNumber && semester >= semesterIndex) continue;
+          previousPeriods.push({ year, semester });
+        }
+      }
+
+      const previousDocuments = await Promise.all(
+        [...new Set(previousPeriods.map((period) => period.year))].map((year) => getCurriculumDocument(year))
+      );
+      const previousDocumentsByYear = new Map(
+        [...new Set(previousPeriods.map((period) => period.year))].map((year, index) => [year, previousDocuments[index]])
+      );
+      const upcomingDocument = await Promise.all([
+        upcomingYear <= 4 ? getCurriculumDocument(upcomingYear) : null,
+      ]).then(([document]) => document);
+
+      const getSubjects = (document, semester) => {
+        const subjects = document?.semesters?.[semester]?.subjects;
+        return Array.isArray(subjects) ? subjects : [];
+      };
+
+      setCurriculumMapping([
+        {
+          label: "Previous",
+          columns: previousPeriods.map((period) => ({
+            year: period.year,
+            semester: period.semester,
+            subjects: getSubjects(previousDocumentsByYear.get(period.year), period.semester),
+          })),
+          borderClass: "border-blue-400",
+          headerClass: "bg-blue-50 text-blue-900",
+        },
+        {
+          label: "Current",
+          columns: [{
+            year: yearNumber,
+            semester: semesterIndex,
+            subjects: getSubjects(currentYearDocument, semesterIndex),
+          }],
+          borderClass: "border-emerald-500",
+          headerClass: "bg-emerald-50 text-emerald-900",
+        },
+        {
+          label: "Upcoming",
+          columns: [{
+            year: upcomingYear,
+            semester: upcomingSemester,
+            subjects: getSubjects(upcomingDocument, upcomingSemester),
+          }],
+          borderClass: "border-yellow-400",
+          headerClass: "bg-yellow-50 text-yellow-900",
+        },
+      ]);
+    } catch (error) {
+      setSubjectError(error.response?.data?.message || error.message || "Failed to load curriculum mapping.");
+    } finally {
+      setSubjectLoading(false);
+    }
   };
 
   const handlePageSizeChange = (nextSize) => {
@@ -657,7 +855,7 @@ function StudentsTable({
                           }}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-emerald-100 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-600"
                           aria-label={`View curriculum for ${student.firstName ?? "student"}`}
-                          title="View Curriculum Checklist"
+                          title="View Current Curriculum"
                         >
                           <i className="fa-solid fa-book-open text-sm" />
                         </button>
@@ -1033,7 +1231,11 @@ function StudentsTable({
                 <div>
                   <h3 className="text-lg font-bold text-white flex items-center gap-2">
                     <i className={`fa-solid ${selectedSubjectView === "schedule" ? "fa-calendar-days" : "fa-book-open"} text-emerald-300`} />
-                    {selectedSubjectView === "schedule" ? "Class Schedule" : "Curriculum Checklist"}
+                    {selectedSubjectView === "schedule"
+                      ? "Class Schedule"
+                      : isCurriculumMapping
+                        ? "Curriculum Mapping"
+                        : "Current Curriculum"}
                   </h3>
                   <p className="mt-1 text-xs text-emerald-100/90 font-medium">
                     {selectedStudent.firstName} {selectedStudent.lastName} <span className="mx-1.5">•</span>{" "}
@@ -1067,6 +1269,104 @@ function StudentsTable({
                     <p className="text-xs text-slate-500 max-w-md">{subjectError}</p>
                   </div>
                 ) : (
+                  selectedSubjectView === "curriculum" && isCurriculumMapping ? (
+                    <div className="max-w-full overflow-x-auto">
+                      <div ref={mappingContainerRef} className="relative inline-flex min-w-max items-start gap-6">
+                      <svg
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 z-30 overflow-visible"
+                        width={curriculumMappingSize.width}
+                        height={curriculumMappingSize.height}
+                      >
+                        {curriculumMappingLines
+                          .filter((line) => line.behindZones)
+                          .map((line) => (
+                            <g key={line.id}>
+                              <path
+                                d={line.path}
+                                fill="none"
+                                stroke="#ef1d25"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth="2"
+                              />
+                              <circle cx={line.startX} cy={line.startY} r="3" fill="#ef1d25" />
+                              <circle cx={line.endX} cy={line.endY} r="3" fill="#ef1d25" />
+                            </g>
+                        ))}
+                      </svg>
+                      {curriculumMapping?.map((zone) => (
+                        <section
+                          key={zone.label}
+                          className={`relative shrink-0 ${zone.label === "Current" ? "z-40" : "z-20"} rounded-xl border-2 bg-white/70 p-3 shadow-sm ${zone.borderClass}`}
+                        >
+                          <p className="px-1 pb-2 text-xs font-black uppercase tracking-[0.16em] text-slate-700">{zone.label}</p>
+                          <div className="flex max-w-full items-start gap-3 overflow-x-auto pb-1">
+                            {zone.columns.map((column) => (
+                              <div key={`${zone.label}-${column.year}-${column.semester}`} className="w-fit max-w-full shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                                <div className={`w-fit max-w-full whitespace-nowrap border-b px-4 py-3 ${zone.headerClass}`}>
+                                  <h4 className="text-sm font-extrabold">{getCurriculumPeriodLabel(column.year, column.semester)}</h4>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                  {column.subjects.length > 0 ? column.subjects.map((subject, index) => {
+                                    const prerequisites = getSubjectPrerequisites(subject);
+                                    return (
+                                      <div
+                                        key={`${subject.subject_code || subject.code || "subject"}-${index}`}
+                                        className="w-fit max-w-full whitespace-nowrap px-4 py-3"
+                                      >
+                                        <p
+                                          ref={(element) => {
+                                            const code = String(subject.subject_code || subject.code || "").trim().toUpperCase();
+                                            if (code) mappingSubjectRefs.current[code] = { element, zone: zone.label };
+                                          }}
+                                          className="font-mono text-xs font-bold text-slate-800"
+                                        >
+                                          {subject.subject_code || subject.code || "-"}
+                                        </p>
+                                        {prerequisites && (
+                                          <p className="mt-2 flex items-center gap-1.5 text-[0.68rem] font-semibold text-slate-500">
+                                            <i className="fa-solid fa-arrow-left text-[0.6rem]" aria-hidden="true" />
+                                            <span>Pre: {prerequisites}</span>
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  }) : (
+                                    <p className="px-4 py-6 text-center text-xs font-medium text-slate-400">No subjects listed.</p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                      <svg
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 z-50 overflow-visible"
+                        width={curriculumMappingSize.width}
+                        height={curriculumMappingSize.height}
+                      >
+                        {curriculumMappingLines
+                          .filter((line) => !line.behindZones)
+                          .map((line) => (
+                            <g key={line.id}>
+                              <path
+                                d={line.path}
+                                fill="none"
+                                stroke="#ef1d25"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth="2"
+                              />
+                              <circle cx={line.startX} cy={line.startY} r="3" fill="#ef1d25" />
+                              <circle cx={line.endX} cy={line.endY} r="3" fill="#ef1d25" />
+                            </g>
+                          ))}
+                      </svg>
+                      </div>
+                    </div>
+                  ) : (
                   <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
                     <table className="min-w-full border-collapse text-sm">
                       {selectedSubjectView === "schedule" ? (
@@ -1117,10 +1417,22 @@ function StudentsTable({
                       </tbody>
                     </table>
                   </div>
+                  )
                 )}
               </div>
 
-              <div className="flex justify-end border-t border-slate-100 bg-white p-4">
+              <div className="flex items-center justify-between gap-4 border-t border-slate-100 bg-white p-4">
+                {selectedSubjectView === "curriculum" ? (
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={isCurriculumMapping}
+                      onChange={(event) => handleCurriculumMappingToggle(event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
+                    />
+                    <span>Curriculum Mapping</span>
+                  </label>
+                ) : <span />}
                 <button
                   type="button"
                   onClick={closeSubjectDialog}

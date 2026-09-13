@@ -1261,7 +1261,7 @@ function Dashboard() {
             <Modal
                 open={Boolean(curriculumApplicant)}
                 onClose={closeApplicantCurriculum}
-                title="Curriculum Checklist"
+                title="Current Curriculum"
                 size="lg"
             >
                 <div className="flex flex-col gap-4">
