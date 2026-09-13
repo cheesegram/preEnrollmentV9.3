@@ -1021,7 +1021,7 @@ function StudentsTable({
       {/* SCHEDULE / CURRICULUM MODAL */}
       {selectedStudent &&
         createPortal(
-          <div className="fixed inset-0 z-[260] flex items-center justify-center overflow-y-auto p-4 md:p-6">
+          <div className="fixed inset-0 z-[400] flex items-center justify-center overflow-y-auto p-4 md:p-6">
             <button
               type="button"
               className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm transition-opacity"
