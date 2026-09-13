@@ -346,6 +346,9 @@ function StudentsTable({
   const mappingSubjectRefs = useRef({});
   const [curriculumMappingLines, setCurriculumMappingLines] = useState([]);
   const [curriculumMappingSize, setCurriculumMappingSize] = useState({ width: 0, height: 0 });
+  const [hoveredConnectionId, setHoveredConnectionId] = useState(null);
+  const [hoveredSubjectCode, setHoveredSubjectCode] = useState(null);
+  const [selectedConnectionCode, setSelectedConnectionCode] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(initialPageSize);
 
@@ -526,6 +529,9 @@ function StudentsTable({
     setIsCurriculumMapping(false);
     setCurriculumMapping(null);
     setCurriculumMappingLines([]);
+    setHoveredConnectionId(null);
+    setHoveredSubjectCode(null);
+    setSelectedConnectionCode(null);
     setSubjectError("");
   };
 
@@ -574,6 +580,8 @@ function StudentsTable({
 
             lines.push({
               id: `${prerequisite}-${subjectCode}`,
+              sourceCode: prerequisite,
+              targetCode: subjectCode,
               path: `M ${startX} ${startY} H ${firstBendX} V ${endY} H ${endX}`,
               startX,
               startY,
@@ -605,6 +613,34 @@ function StudentsTable({
       scrollContainer?.removeEventListener("scroll", updateMappingLines);
     };
   }, [curriculumMapping, isCurriculumMapping]);
+
+  const isConnectionActive = (line) =>
+    line.id === hoveredConnectionId ||
+    line.targetCode === hoveredSubjectCode ||
+    line.targetCode === selectedConnectionCode;
+
+  const isSubjectConnectionActive = (code) => {
+    const normalizedCode = String(code ?? "").trim().toUpperCase();
+    const hoveredTarget = normalizedCode === hoveredSubjectCode;
+    const selectedTarget = normalizedCode === selectedConnectionCode;
+    const isPrerequisite = curriculumMappingLines.some((line) =>
+      isConnectionActive(line) && line.sourceCode === normalizedCode
+    );
+    return hoveredTarget || selectedTarget || isPrerequisite;
+  };
+
+  const hasPrerequisites = (code) => {
+    const normalizedCode = String(code ?? "").trim().toUpperCase();
+    return curriculumMappingLines.some((line) =>
+      line.targetCode === normalizedCode
+    );
+  };
+
+  const handleSubjectConnectionClick = (code) => {
+    const normalizedCode = String(code ?? "").trim().toUpperCase();
+    if (!hasPrerequisites(normalizedCode)) return;
+    setSelectedConnectionCode((currentCode) => currentCode === normalizedCode ? null : normalizedCode);
+  };
 
   const handleCurriculumMappingToggle = async (enabled) => {
     setIsCurriculumMapping(enabled);
@@ -1272,33 +1308,10 @@ function StudentsTable({
                   selectedSubjectView === "curriculum" && isCurriculumMapping ? (
                     <div className="max-w-full overflow-x-auto">
                       <div ref={mappingContainerRef} className="relative inline-flex min-w-max items-start gap-6">
-                      <svg
-                        aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 z-30 overflow-visible"
-                        width={curriculumMappingSize.width}
-                        height={curriculumMappingSize.height}
-                      >
-                        {curriculumMappingLines
-                          .filter((line) => line.behindZones)
-                          .map((line) => (
-                            <g key={line.id}>
-                              <path
-                                d={line.path}
-                                fill="none"
-                                stroke="#ef1d25"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth="2"
-                              />
-                              <circle cx={line.startX} cy={line.startY} r="3" fill="#ef1d25" />
-                              <circle cx={line.endX} cy={line.endY} r="3" fill="#ef1d25" />
-                            </g>
-                        ))}
-                      </svg>
                       {curriculumMapping?.map((zone) => (
                         <section
                           key={zone.label}
-                          className={`relative shrink-0 ${zone.label === "Current" ? "z-40" : "z-20"} rounded-xl border-2 bg-white/70 p-3 shadow-sm ${zone.borderClass}`}
+                          className={`relative z-40 shrink-0 rounded-xl border-2 bg-white/70 p-3 shadow-sm ${zone.borderClass}`}
                         >
                           <p className="px-1 pb-2 text-xs font-black uppercase tracking-[0.16em] text-slate-700">{zone.label}</p>
                           <div className="flex max-w-full items-start gap-3 overflow-x-auto pb-1">
@@ -1320,7 +1333,20 @@ function StudentsTable({
                                             const code = String(subject.subject_code || subject.code || "").trim().toUpperCase();
                                             if (code) mappingSubjectRefs.current[code] = { element, zone: zone.label };
                                           }}
-                                          className="font-mono text-xs font-bold text-slate-800"
+                                            className={`rounded-md px-1 font-mono text-xs font-bold transition-all duration-150 ${hasPrerequisites(subject.subject_code || subject.code) ? "cursor-pointer" : "cursor-default"} ${isSubjectConnectionActive(subject.subject_code || subject.code)
+                                              ? "bg-emerald-100 text-emerald-950 shadow-[0_0_0_2px_rgba(16,185,129,0.65),0_0_10px_rgba(16,185,129,0.35)]"
+                                              : "text-slate-800"
+                                              }`}
+                                            onMouseEnter={() => {
+                                              const code = String(subject.subject_code || subject.code || "").trim().toUpperCase();
+                                              if (hasPrerequisites(code)) setHoveredSubjectCode(code);
+                                            }}
+                                            onMouseLeave={() => {
+                                              if (hoveredSubjectCode === String(subject.subject_code || subject.code || "").trim().toUpperCase()) {
+                                                setHoveredSubjectCode(null);
+                                              }
+                                            }}
+                                            onClick={() => handleSubjectConnectionClick(subject.subject_code || subject.code)}
                                         >
                                           {subject.subject_code || subject.code || "-"}
                                         </p>
@@ -1347,20 +1373,20 @@ function StudentsTable({
                         width={curriculumMappingSize.width}
                         height={curriculumMappingSize.height}
                       >
-                        {curriculumMappingLines
-                          .filter((line) => !line.behindZones)
-                          .map((line) => (
+                        {curriculumMappingLines.map((line) => (
                             <g key={line.id}>
                               <path
                                 d={line.path}
                                 fill="none"
-                                stroke="#ef1d25"
+                                stroke={isConnectionActive(line) ? "#10b981" : "#64748b"}
+                                opacity={isConnectionActive(line) ? "1" : "0.12"}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
-                                strokeWidth="2"
+                                strokeWidth={isConnectionActive(line) ? "3" : "2"}
+                                className="transition-all duration-150"
                               />
-                              <circle cx={line.startX} cy={line.startY} r="3" fill="#ef1d25" />
-                              <circle cx={line.endX} cy={line.endY} r="3" fill="#ef1d25" />
+                              <circle cx={line.startX} cy={line.startY} r="3" fill={isConnectionActive(line) ? "#10b981" : "#64748b"} opacity={isConnectionActive(line) ? "1" : "0.12"} />
+                              <circle cx={line.endX} cy={line.endY} r="3" fill={isConnectionActive(line) ? "#10b981" : "#64748b"} opacity={isConnectionActive(line) ? "1" : "0.12"} />
                             </g>
                           ))}
                       </svg>
