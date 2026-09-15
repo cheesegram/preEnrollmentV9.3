@@ -940,7 +940,7 @@ function StudentsTable({
       {/* STUDENT RECORD MODAL */}
       {detailStudent &&
         createPortal(
-          <div className="fixed inset-0 z-[230] flex items-center justify-center overflow-y-auto p-3 sm:p-6">
+          <div className="fixed inset-0 z-[310] flex items-center justify-center overflow-y-auto p-3 sm:p-6">
             <button
               type="button"
               className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm transition-opacity"
