@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import api from "../lib/axios";
@@ -343,12 +343,120 @@ function StudentsTable({
   const [isCurriculumMapping, setIsCurriculumMapping] = useState(false);
   const [curriculumMapping, setCurriculumMapping] = useState(null);
   const mappingContainerRef = useRef(null);
+  const scrollContainerRef = useRef(null);
   const mappingSubjectRefs = useRef({});
   const [curriculumMappingLines, setCurriculumMappingLines] = useState([]);
   const [curriculumMappingSize, setCurriculumMappingSize] = useState({ width: 0, height: 0 });
   const [hoveredConnectionId, setHoveredConnectionId] = useState(null);
   const [hoveredSubjectCode, setHoveredSubjectCode] = useState(null);
   const [selectedConnectionCode, setSelectedConnectionCode] = useState(null);
+  const dragStateRef = useRef(null);
+  const [currentZoneCentered, setCurrentZoneCentered] = useState(false);
+
+  // --- Curriculum Mapping: center "Current" zone & drag-to-scroll ---
+
+  const centerCurrentZone = useCallback(() => {
+    const container = scrollContainerRef.current;
+    const inner = mappingContainerRef.current;
+    if (!container || !inner || !curriculumMapping?.length) return;
+
+    const currentZone = curriculumMapping.find((z) => z.label === "Current");
+    if (!currentZone) return;
+
+    // Find the rendered Current zone element inside the inner flex container.
+    const currentEl = inner.querySelector(`section[data-zone="${CSS.escape(currentZone.label)}"]`);
+    if (!currentEl) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const elRect = currentEl.getBoundingClientRect();
+    const elLeft = elRect.left - containerRect.left;
+    const elWidth = elRect.width;
+    const scrollTarget = elLeft + elWidth / 2 - containerRect.width / 2;
+
+    container.scrollTo({ left: Math.max(0, scrollTarget), behavior: "smooth" });
+    setCurrentZoneCentered(true);
+  }, [curriculumMapping]);
+
+  // Center Current zone once after the mapping has been laid out.
+  useLayoutEffect(() => {
+    if (!isCurriculumMapping || !curriculumMapping?.length) {
+      setCurrentZoneCentered(false);
+      return;
+    }
+    // Defer until the DOM has painted the zone sections.
+    const raf = requestAnimationFrame(() => {
+      centerCurrentZone();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [isCurriculumMapping, curriculumMapping, centerCurrentZone]);
+  // Re-center Current zone when the window is resized so the centering
+  // stays correct after orientation changes, panel toggles, etc.
+  useEffect(() => {
+    if (!isCurriculumMapping || !curriculumMapping?.length) return;
+
+    const handleResize = () => {
+      requestAnimationFrame(() => {
+        centerCurrentZone();
+      });
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [isCurriculumMapping, curriculumMapping, centerCurrentZone]);
+
+  // --- Drag-to-scroll handlers ---
+
+  const getScrollContainer = () => scrollContainerRef.current;
+
+  const onMappingPointerDown = (e) => {
+    // Only start a drag when the pointer is over the mapping area (not over a subject chip
+    // that handles its own clicks). Allow drag from empty areas, zone headers, and gaps.
+    const target = e.target;
+    if (target.closest("button") || target.closest("label")) return;
+
+    const container = getScrollContainer();
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    dragStateRef.current = {
+      startX: e.clientX,
+      startScrollLeft: container.scrollLeft,
+      containerRect: rect,
+    };
+    container.setPointerCapture(e.pointerId);
+  };
+
+  const onMappingPointerMove = (e) => {
+    const ds = dragStateRef.current;
+    if (!ds) return;
+    const container = getScrollContainer();
+    if (!container) return;
+
+    const delta = e.clientX - ds.startX;
+    // Invert: dragging left should scroll content left (reveal content to the right).
+    container.scrollLeft = ds.startScrollLeft - delta;
+  };
+
+  const onMappingPointerUp = () => {
+    const ds = dragStateRef.current;
+    if (!ds) return;
+    const container = getScrollContainer();
+    if (container) {
+      container.releasePointerCapture(ds.pointerId);
+    }
+    dragStateRef.current = null;
+  };
+
+  const onMappingPointerCancel = () => {
+    const ds = dragStateRef.current;
+    const container = getScrollContainer();
+    if (container && ds) {
+      container.releasePointerCapture(ds.pointerId);
+    }
+    dragStateRef.current = null;
+  };
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(initialPageSize);
 
@@ -715,7 +823,7 @@ function StudentsTable({
           borderClass: "border-emerald-500",
           headerClass: "bg-emerald-50 text-emerald-900",
         },
-        {
+        ...(upcomingYear <= 4 ? [{
           label: "Upcoming",
           columns: [{
             year: upcomingYear,
@@ -724,7 +832,7 @@ function StudentsTable({
           }],
           borderClass: "border-yellow-400",
           headerClass: "bg-yellow-50 text-yellow-900",
-        },
+        }] : []),
       ]);
     } catch (error) {
       setSubjectError(error.response?.data?.message || error.message || "Failed to load curriculum mapping.");
@@ -1306,10 +1414,18 @@ function StudentsTable({
                   </div>
                 ) : (
                   selectedSubjectView === "curriculum" && isCurriculumMapping ? (
-                    <div className="max-w-full overflow-x-auto">
+                    <div
+                      ref={scrollContainerRef}
+                      className="max-w-full overflow-x-auto no-scrollbar cursor-grab active:cursor-grabbing select-none touch-none"
+                      onPointerDown={onMappingPointerDown}
+                      onPointerMove={onMappingPointerMove}
+                      onPointerUp={onMappingPointerUp}
+                      onPointerCancel={onMappingPointerCancel}
+                    >
                       <div ref={mappingContainerRef} className="relative inline-flex min-w-max items-start gap-6">
                       {curriculumMapping?.map((zone) => (
                         <section
+                          data-zone={zone.label}
                           key={zone.label}
                           className={`relative z-40 shrink-0 rounded-xl border-2 bg-white/70 p-3 shadow-sm ${zone.borderClass}`}
                         >
