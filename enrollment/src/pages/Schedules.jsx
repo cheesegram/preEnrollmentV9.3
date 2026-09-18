@@ -404,7 +404,7 @@ function Schedules() {
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
         <ActionButton tone="outline" onClick={handleEditAction} disabled={savingChanges}>
           <i className="fa-regular fa-pen-to-square" />
-          {editingEnabled && hasPendingChanges ? "Save Changes" : "Edit Schedule"}
+          {editingEnabled ? "Send Request" : "Make Schedule Request"}
         </ActionButton>
         {editingEnabled ? (
           <ActionButton tone="outline" onClick={handleCancelEdit} disabled={savingChanges}>
