@@ -231,28 +231,6 @@ export async function saveScheduleTableChanges({ scheduleId, rowChanges }) {
   return response.data;
 }
 
-function mapApiFieldsToRowFields(apiEntry) {
-  const result = {};
-  if (Array.isArray(apiEntry?.days)) {
-    result.days = apiEntry.days;
-  } else if (apiEntry?.day) {
-    result.days = [apiEntry.day];
-  }
-  if (apiEntry?.startTime != null) {
-    result.timeStart = formatTime(apiEntry.startTime);
-  }
-  if (apiEntry?.endTime != null) {
-    result.timeEnd = formatTime(apiEntry.endTime);
-  }
-  if (apiEntry?.roomName != null || apiEntry?.roomId != null) {
-    result.room = apiEntry.roomName ?? "";
-  }
-  if (apiEntry?.profName != null || apiEntry?.profId != null) {
-    result.instructor = apiEntry.profName ?? "";
-  }
-  return result;
-}
-
 export async function createScheduleRequest({ scheduleId, rowChanges }) {
   if (!scheduleId) {
     throw new Error("Missing schedule id for schedule request.");
@@ -294,12 +272,18 @@ export async function createScheduleRequest({ scheduleId, rowChanges }) {
     }),
   };
 
-  // POST the modified schedule copy as a new request with status "pending"
-    const response = await api.post("/schedules/schedulerequests", {
+    // POST the modified schedule copy as a new request with status "pending"
+  const response = await api.post("/schedules/schedulerequests", {
     scheduleId,
     schedule: updatedSchedule,
     status: "pending",
   });
 
   return response.data;
+}
+
+export async function fetchScheduleRequests() {
+  const response = await api.get("/schedules/schedulerequests");
+  const data = Array.isArray(response.data) ? response.data : [];
+  return data;
 }

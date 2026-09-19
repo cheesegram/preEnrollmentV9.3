@@ -7,7 +7,7 @@ import SelectField from "../components/ui/SelectField";
 import ActionButton from "../components/ui/ActionButton";
 import ScheduleSummaryCard from "../components/ui/ScheduleSummaryCard";
 import ScheduleTable from "../components/ScheduleTable";
-import { fetchSchedulePageData, fetchScheduleConflicts, createScheduleRequest } from "../lib/scheduleRepository";
+import { fetchSchedulePageData, fetchScheduleConflicts, fetchScheduleRequests, createScheduleRequest } from "../lib/scheduleRepository";
 
 const EDITABLE_ROW_FIELDS = [
   "days",
@@ -79,13 +79,17 @@ function Schedules() {
   const [editingEnabled, setEditingEnabled] = useState(false);
   const [tableOriginals, setTableOriginals] = useState({});
   const [rowDraftChanges, setRowDraftChanges] = useState({});
-  const [savingChanges, setSavingChanges] = useState(false);
+    const [savingChanges, setSavingChanges] = useState(false);
+  const [scheduleRequests, setScheduleRequests] = useState([]);
 
   useEffect(() => {
     let isMounted = true;
 
     const loadData = async () => {
-      const data = await fetchSchedulePageData();
+      const [data, requestsData] = await Promise.all([
+        fetchSchedulePageData(),
+        fetchScheduleRequests(),
+      ]);
       if (!isMounted) return;
 
       setRows(Array.isArray(data.rows) ? data.rows : []);
@@ -93,6 +97,7 @@ function Schedules() {
       setStatus(data.status ?? { hasConflicts: false, message: "No Schedule Conflicts Detected", description: "All assigned schedules passed validation." });
       setConflicts(data.conflicts ?? []);
       setPreview(data.preview ?? { section: "", semester: "", schoolYear: "" });
+      setScheduleRequests(Array.isArray(requestsData) ? requestsData : []);
 
       const firstRow = data.rows?.[0];
       const sectionOptions = Array.isArray(data.filters?.sections) ? data.filters.sections : [];
@@ -139,19 +144,39 @@ function Schedules() {
   const totalUnits = visibleRows.reduce((sum, row) => sum + Number(row.units ?? 0), 0);
   const totalWeeklyHours = visibleRows.reduce((sum, row) => sum + Math.max(1, Number(row.units ?? 0)) * (Array.isArray(row.days) ? row.days.length || 1 : 1), 0);
 
-  const lastUpdatedLabel = useMemo(() => {
-    const timestamps = visibleRows
-      .map((row) => new Date(row.updatedAt ?? row.generatedAt ?? 0).getTime())
-      .filter((time) => Number.isFinite(time) && time > 0);
-    if (timestamps.length === 0) return "";
-    return new Date(Math.max(...timestamps)).toLocaleString("en-US", {
+    const lastUpdatedLabel = useMemo(() => {
+    // Show the last schedule request date for the selected section
+    const matchingRequests = scheduleRequests.filter((req) => {
+      const reqSection = `${String(req?.year ?? "").trim()}${String(req?.section ?? "").trim()}`;
+      return reqSection === selectedSection && req?.created_at;
+    });
+
+    if (matchingRequests.length === 0) {
+      // Fall back to schedule's updated_at/generated_at
+      const timestamps = visibleRows
+        .map((row) => new Date(row.updatedAt ?? row.generatedAt ?? 0).getTime())
+        .filter((time) => Number.isFinite(time) && time > 0);
+      if (timestamps.length === 0) return "";
+      return new Date(Math.max(...timestamps)).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    }
+
+    // Sort by created_at descending and take the most recent
+    matchingRequests.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const latest = matchingRequests[0];
+    return new Date(latest.created_at).toLocaleString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
       hour: "numeric",
       minute: "2-digit",
     });
-  }, [visibleRows]);
+  }, [visibleRows, scheduleRequests, selectedSection]);
   const hasPendingChanges = Object.keys(rowDraftChanges).length > 0;
 
   const activeStatus = useMemo(() => {
@@ -284,8 +309,16 @@ function Schedules() {
         }
       }
 
-      clearEditingSession();
+            clearEditingSession();
       toast.success("Schedule request sent successfully");
+
+      // Refresh schedule requests to update the "Last Request" display
+      try {
+        const refreshedRequests = await fetchScheduleRequests();
+        setScheduleRequests(Array.isArray(refreshedRequests) ? refreshedRequests : []);
+      } catch (refreshError) {
+        console.warn("Failed to refresh schedule requests:", refreshError);
+      }
     } catch (error) {
       console.error("Failed to save schedule changes", error);
       toast.error("Failed to send schedule request");

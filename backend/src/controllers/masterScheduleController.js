@@ -467,9 +467,40 @@ export async function createScheduleRequest(req, res) {
             return res.status(400).json({ message: 'Request body must include scheduleId and schedule.' });
         }
 
+        const section = String(schedule?.section ?? '').trim();
+        const year = String(schedule?.year ?? '').trim();
+
+        // Check for existing pending request for the same section+year
+        const existingRequest = await ScheduleRequest.findOne({
+            scheduleId,
+            status: 'pending',
+        }).sort({ created_at: -1 });
+
+        if (existingRequest) {
+            // Update the existing pending request
+            existingRequest.schedule = schedule;
+            existingRequest.section = section;
+            existingRequest.year = year;
+            existingRequest.updated_at = new Date();
+
+            const updatedRequest = await existingRequest.save();
+
+            return res.status(200).json({
+                message: 'Schedule request updated successfully.',
+                requestId: updatedRequest._id,
+                scheduleId: updatedRequest.scheduleId,
+                status: updatedRequest.status,
+                created_at: updatedRequest.created_at,
+                updated_at: updatedRequest.updated_at,
+            });
+        }
+
+        // No existing pending request — create a new one
         const request = new ScheduleRequest({
             scheduleId,
             schedule,
+            section,
+            year,
             status: status || 'pending',
         });
 
@@ -481,10 +512,38 @@ export async function createScheduleRequest(req, res) {
             scheduleId: savedRequest.scheduleId,
             status: savedRequest.status,
             created_at: savedRequest.created_at,
+            updated_at: savedRequest.updated_at,
         });
     } catch (error) {
         console.error('Error creating schedule request:', error);
         return res.status(500).json({ message: 'Internal server error while creating schedule request.' });
+    }
+}
+
+export async function getScheduleRequests(req, res) {
+    try {
+        const schedules = await Schedule.find({}).lean();
+        const requests = await ScheduleRequest.find({}).sort({ created_at: -1 }).lean();
+
+        // Map scheduleId → schedule for enrichment
+        const scheduleMap = new Map();
+        schedules.forEach((schedule) => scheduleMap.set(String(schedule._id), schedule));
+
+        const enrichedRequests = requests.map((request) => {
+            const schedule = scheduleMap.get(request.scheduleId);
+            return {
+                ...request,
+                section: request.section || schedule?.section || '',
+                year: request.year || schedule?.year || '',
+                semester: schedule?.semester || request.schedule?.semester || '',
+                academicYear: schedule?.academic_year || schedule?.academicYear || request.schedule?.academic_year || request.schedule?.academicYear || '',
+            };
+        });
+
+        res.status(200).json(enrichedRequests);
+    } catch (error) {
+        console.error('Error fetching schedule requests:', error);
+        res.status(500).json({ message: 'Internal server error while fetching schedule requests.' });
     }
 }
 

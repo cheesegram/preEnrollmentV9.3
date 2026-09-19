@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 const scheduleRequestSchema = new mongoose.Schema({
   scheduleId: { type: String, required: true },
   schedule: { type: Object, required: true },
+  section: { type: String, trim: true },
+  year: { type: String, trim: true },
   status: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],
