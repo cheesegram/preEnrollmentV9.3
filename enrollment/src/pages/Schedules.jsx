@@ -347,8 +347,18 @@ function Schedules() {
         }
       }
 
-            clearEditingSession();
+                  clearEditingSession();
       toast.success("Schedule request sent successfully");
+
+      // Refresh schedule page data so the table reverts to the default
+      // (master) schedule values for the selected section.
+      try {
+        const refreshedData = await fetchSchedulePageData();
+        setRows(Array.isArray(refreshedData.rows) ? refreshedData.rows : []);
+        setFilters(refreshedData.filters ?? { sections: [], semesters: [], schoolYears: [] });
+      } catch (refreshError) {
+        console.warn("Failed to refresh schedule page data:", refreshError);
+      }
 
       // Refresh schedule requests to update the "Last Request" display
       try {
