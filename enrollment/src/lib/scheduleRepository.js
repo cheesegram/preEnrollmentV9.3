@@ -107,6 +107,55 @@ function normalizeScheduleRows(schedules, subjectCatalog = new Map()) {
   );
 }
 
+function normalizeScheduleRequestRows(request, subjectCatalog = new Map()) {
+  const schedule = request?.schedule ?? {};
+  return (Array.isArray(schedule?.classes) ? schedule.classes : []).map((classEntry, index) => {
+    const subjectCode = String(classEntry?.subjectCode ?? classEntry?.subject_code ?? "").trim();
+    const catalogEntry = subjectCatalog.get(normalizeSubjectCode(subjectCode));
+
+    return {
+      id: `request-${request._id ?? "request"}-${index}`,
+      scheduleId: String(request?.scheduleId ?? ""),
+      classIndex: index,
+      section: getScheduleSection(schedule, classEntry),
+      semester: formatSemester(schedule.semester),
+      schoolYear: formatAcademicYear(schedule.academicYear ?? schedule.academic_year),
+      subjectCode,
+      subjectTitle: classEntry.subjectTitle ?? classEntry.subjectName ?? catalogEntry?.title ?? "",
+      units: Number(classEntry.units ?? catalogEntry?.units ?? 0),
+      days: Array.isArray(classEntry.days)
+        ? classEntry.days.filter(Boolean)
+        : classEntry.day
+          ? [classEntry.day]
+          : [],
+      timeStart: formatTime(classEntry.startTime),
+      timeEnd: formatTime(classEntry.endTime),
+      room: classEntry.roomName ?? classEntry.roomId ?? "",
+      instructor: classEntry.profName ?? classEntry.profId ?? "",
+      instructorRole: "Instructor",
+      updatedAt: request?.updated_at ?? request?.updatedAt ?? null,
+      generatedAt: schedule?.generated_at ?? null,
+    };
+  });
+}
+
+export function findPendingRequestForSection(requests, sectionKey, subjectCatalog = new Map()) {
+  if (!sectionKey) return null;
+
+  const matching = (Array.isArray(requests) ? requests : []).filter((req) => {
+    if (req?.status !== "pending") return false;
+    const reqSection = `${String(req?.year ?? "").trim()}${String(req?.section ?? "").trim()}`;
+    return reqSection === sectionKey;
+  });
+
+  if (matching.length === 0) return null;
+
+  matching.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const latest = matching[0];
+  const rows = normalizeScheduleRequestRows(latest, subjectCatalog);
+  return { request: latest, rows };
+}
+
 export async function fetchScheduleConflicts() {
   const response = await api.get("/schedules/conflicts");
   return response.data;

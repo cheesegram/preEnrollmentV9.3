@@ -7,7 +7,7 @@ import SelectField from "../components/ui/SelectField";
 import ActionButton from "../components/ui/ActionButton";
 import ScheduleSummaryCard from "../components/ui/ScheduleSummaryCard";
 import ScheduleTable from "../components/ScheduleTable";
-import { fetchSchedulePageData, fetchScheduleConflicts, fetchScheduleRequests, createScheduleRequest } from "../lib/scheduleRepository";
+import { fetchSchedulePageData, fetchScheduleConflicts, fetchScheduleRequests, findPendingRequestForSection, createScheduleRequest } from "../lib/scheduleRepository";
 
 const EDITABLE_ROW_FIELDS = [
   "days",
@@ -76,10 +76,11 @@ function Schedules() {
   const [selectedSection, setSelectedSection] = useState("");
   const [selectedSemester, setSelectedSemester] = useState("");
   const [selectedSchoolYear, setSelectedSchoolYear] = useState("");
-  const [editingEnabled, setEditingEnabled] = useState(false);
+    const [editingEnabled, setEditingEnabled] = useState(false);
   const [tableOriginals, setTableOriginals] = useState({});
   const [rowDraftChanges, setRowDraftChanges] = useState({});
-    const [savingChanges, setSavingChanges] = useState(false);
+  const [editingRows, setEditingRows] = useState(null);
+  const [savingChanges, setSavingChanges] = useState(false);
   const [scheduleRequests, setScheduleRequests] = useState([]);
 
   useEffect(() => {
@@ -131,14 +132,15 @@ function Schedules() {
     document.title = "Schedules - IITI Enrollment System";
   }, []);
 
-  const visibleRows = useMemo(() => {
-    return rows.filter((row) => {
+    const visibleRows = useMemo(() => {
+    const sourceRows = editingEnabled && editingRows ? editingRows : rows;
+    return sourceRows.filter((row) => {
       const sectionMatches = !selectedSection || String(row.section ?? "").trim() === selectedSection;
       const semesterMatches = !selectedSemester || String(row.semester ?? "").trim() === selectedSemester;
       const schoolYearMatches = !selectedSchoolYear || String(row.schoolYear ?? "").trim() === selectedSchoolYear;
       return sectionMatches && semesterMatches && schoolYearMatches;
     });
-  }, [rows, selectedSection, selectedSemester, selectedSchoolYear]);
+  }, [rows, editingRows, editingEnabled, selectedSection, selectedSemester, selectedSchoolYear]);
 
   const filteredRowCount = visibleRows.length;
   const totalUnits = visibleRows.reduce((sum, row) => sum + Number(row.units ?? 0), 0);
@@ -211,11 +213,11 @@ function Schedules() {
     return status;
   }, [conflicts, selectedSection, selectedSemester, selectedSchoolYear, status]);
 
-  const pendingRowPayload = useMemo(
+    const pendingRowPayload = useMemo(
     () =>
       Object.entries(rowDraftChanges)
         .map(([rowId, changes]) => {
-          const row = rows.find((entry) => entry.id === rowId);
+          const row = (editingRows ?? rows).find((entry) => entry.id === rowId);
           if (!row) return null;
 
           return {
@@ -225,50 +227,81 @@ function Schedules() {
           };
         })
         .filter(Boolean),
-    [rowDraftChanges, rows]
+    [rowDraftChanges, rows, editingRows]
   );
 
-  const clearEditingSession = () => {
+    const clearEditingSession = () => {
     setEditingEnabled(false);
     setTableOriginals({});
     setRowDraftChanges({});
+    setEditingRows(null);
   };
 
-  const updateRow = (rowId, field, value) => {
+    const updateRow = (rowId, field, value) => {
     if (!editingEnabled) return;
 
-    setRows((currentRows) => {
-      const targetRow = currentRows.find((row) => row.id === rowId);
-      const nextRow = targetRow ? { ...targetRow, [field]: value } : null;
+    // Determine which row source to use for updating
+    if (editingRows) {
+      setEditingRows((currentRows) => {
+        const targetRow = currentRows.find((row) => row.id === rowId);
+        const nextRow = targetRow ? { ...targetRow, [field]: value } : null;
 
-      if (nextRow) {
-        setRowDraftChanges((currentDrafts) => {
-          const original = tableOriginals[rowId] ?? pickEditableRowFields(targetRow);
+        if (nextRow) {
+          setRowDraftChanges((currentDrafts) => {
+            const original = tableOriginals[rowId] ?? pickEditableRowFields(targetRow);
+            const nextChanges = getRowChanges(original, nextRow);
+            if (Object.keys(nextChanges).length === 0) {
+              const { [rowId]: _ignored, ...rest } = currentDrafts;
+              return rest;
+            }
+            return { ...currentDrafts, [rowId]: nextChanges };
+          });
+        }
 
-          const nextChanges = getRowChanges(original, nextRow);
-          if (Object.keys(nextChanges).length === 0) {
-            const { [rowId]: _ignored, ...rest } = currentDrafts;
-            return rest;
-          }
-
-          return {
-            ...currentDrafts,
-            [rowId]: nextChanges,
-          };
+        return currentRows.map((row) => {
+          if (row.id !== rowId) return row;
+          return { ...row, [field]: value };
         });
-      }
-
-      return currentRows.map((row) => {
-        if (row.id !== rowId) return row;
-        return { ...row, [field]: value };
       });
-    });
+    } else {
+      setRows((currentRows) => {
+        const targetRow = currentRows.find((row) => row.id === rowId);
+        const nextRow = targetRow ? { ...targetRow, [field]: value } : null;
+
+        if (nextRow) {
+          setRowDraftChanges((currentDrafts) => {
+            const original = tableOriginals[rowId] ?? pickEditableRowFields(targetRow);
+            const nextChanges = getRowChanges(original, nextRow);
+            if (Object.keys(nextChanges).length === 0) {
+              const { [rowId]: _ignored, ...rest } = currentDrafts;
+              return rest;
+            }
+            return { ...currentDrafts, [rowId]: nextChanges };
+          });
+        }
+
+        return currentRows.map((row) => {
+          if (row.id !== rowId) return row;
+          return { ...row, [field]: value };
+        });
+      });
+    }
   };
 
   const isRowDirty = (rowId) => Object.keys(rowDraftChanges[rowId] ?? {}).length > 0;
 
-  const handleStartEdit = () => {
-    setTableOriginals(buildBaselineFromRows(visibleRows));
+    const handleStartEdit = () => {
+    // Check if there's a pending request for the selected section
+    const pendingResult = findPendingRequestForSection(scheduleRequests, selectedSection);
+    if (pendingResult) {
+      // Use the pending request's schedule data as the editing baseline
+      const pendingRows = pendingResult.rows;
+      setEditingRows(pendingRows);
+      setTableOriginals(buildBaselineFromRows(pendingRows));
+    } else {
+      setEditingRows(null);
+      setTableOriginals(buildBaselineFromRows(visibleRows));
+    }
     setRowDraftChanges({});
     setEditingEnabled(true);
     toast("Table editing enabled");
@@ -327,13 +360,22 @@ function Schedules() {
     }
   };
 
-  const handleCancelEdit = () => {
-    setRows((currentRows) =>
-      currentRows.map((row) => {
+    const handleCancelEdit = () => {
+    if (editingRows) {
+      // Restore editing rows to their original baseline
+      const restoredRows = editingRows.map((row) => {
         const original = tableOriginals[row.id];
-        return original ? { ...row, ...original } : row;
-      })
-    );
+        return original ? { ...row, ...pickEditableRowFields(row), ...original } : row;
+      });
+      setEditingRows(restoredRows);
+    } else {
+      setRows((currentRows) =>
+        currentRows.map((row) => {
+          const original = tableOriginals[row.id];
+          return original ? { ...row, ...original } : row;
+        })
+      );
+    }
     clearEditingSession();
     toast("Edit cancelled");
   };
