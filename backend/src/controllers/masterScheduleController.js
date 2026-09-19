@@ -476,8 +476,8 @@ export async function createScheduleRequest(req, res) {
             status: 'pending',
         }).sort({ created_at: -1 });
 
-        if (existingRequest) {
-            // Update the existing pending request
+                        if (existingRequest) {
+            // Update the existing pending request with the new schedule data
             existingRequest.schedule = schedule;
             existingRequest.section = section;
             existingRequest.year = year;

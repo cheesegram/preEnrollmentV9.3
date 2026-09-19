@@ -79,7 +79,8 @@ function Schedules() {
     const [editingEnabled, setEditingEnabled] = useState(false);
   const [tableOriginals, setTableOriginals] = useState({});
   const [rowDraftChanges, setRowDraftChanges] = useState({});
-  const [editingRows, setEditingRows] = useState(null);
+    const [editingRows, setEditingRows] = useState(null);
+  const [pendingRequestSchedule, setPendingRequestSchedule] = useState(null);
   const [savingChanges, setSavingChanges] = useState(false);
   const [scheduleRequests, setScheduleRequests] = useState([]);
 
@@ -230,11 +231,12 @@ function Schedules() {
     [rowDraftChanges, rows, editingRows]
   );
 
-    const clearEditingSession = () => {
+      const clearEditingSession = () => {
     setEditingEnabled(false);
     setTableOriginals({});
     setRowDraftChanges({});
     setEditingRows(null);
+    setPendingRequestSchedule(null);
   };
 
     const updateRow = (rowId, field, value) => {
@@ -290,7 +292,7 @@ function Schedules() {
 
   const isRowDirty = (rowId) => Object.keys(rowDraftChanges[rowId] ?? {}).length > 0;
 
-    const handleStartEdit = () => {
+      const handleStartEdit = () => {
     // Check if there's a pending request for the selected section
     const pendingResult = findPendingRequestForSection(scheduleRequests, selectedSection);
     if (pendingResult) {
@@ -298,9 +300,11 @@ function Schedules() {
       const pendingRows = pendingResult.rows;
       setEditingRows(pendingRows);
       setTableOriginals(buildBaselineFromRows(pendingRows));
+      setPendingRequestSchedule(pendingResult.request.schedule ?? null);
     } else {
       setEditingRows(null);
       setTableOriginals(buildBaselineFromRows(visibleRows));
+      setPendingRequestSchedule(null);
     }
     setRowDraftChanges({});
     setEditingEnabled(true);
@@ -320,9 +324,10 @@ function Schedules() {
 
         try {
       setSavingChanges(true);
-      await createScheduleRequest({
+            await createScheduleRequest({
         scheduleId: uniqueScheduleIds[0],
         rowChanges: pendingRowPayload,
+        baseSchedule: pendingRequestSchedule,
       });
 
       // Reflect the fresh "updated_at" stamp from the backend on the local

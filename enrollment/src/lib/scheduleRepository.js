@@ -280,7 +280,7 @@ export async function saveScheduleTableChanges({ scheduleId, rowChanges }) {
   return response.data;
 }
 
-export async function createScheduleRequest({ scheduleId, rowChanges }) {
+export async function createScheduleRequest({ scheduleId, rowChanges, baseSchedule }) {
   if (!scheduleId) {
     throw new Error("Missing schedule id for schedule request.");
   }
@@ -303,25 +303,29 @@ export async function createScheduleRequest({ scheduleId, rowChanges }) {
     return { skipped: true };
   }
 
-  // Fetch the original schedule to create a modified copy
-  const originalScheduleRes = await api.get(`/schedules/${scheduleId}`);
-  const originalSchedule = originalScheduleRes.data;
+  // Use the provided base schedule (e.g. from a pending request) to avoid
+  // losing previously-saved edits. Fall back to fetching the original schedule.
+  let base = baseSchedule;
+  if (!base || !Array.isArray(base?.classes)) {
+    const originalScheduleRes = await api.get(`/schedules/${scheduleId}`);
+    base = originalScheduleRes.data;
+  }
 
-  if (!originalSchedule || !Array.isArray(originalSchedule.classes)) {
+  if (!base || !Array.isArray(base.classes)) {
     throw new Error("Schedule not found or has no classes.");
   }
 
   // Build a shallow copy of the schedule with updated classes
   const updatedSchedule = {
-    ...originalSchedule,
-    classes: originalSchedule.classes.map((classEntry, index) => {
+    ...base,
+    classes: base.classes.map((classEntry, index) => {
       const updateEntry = mappedUpdates.find((u) => u.classIndex === index);
       if (!updateEntry) return { ...classEntry };
       return { ...classEntry, ...updateEntry.changes };
     }),
   };
 
-    // POST the modified schedule copy as a new request with status "pending"
+  // POST the modified schedule copy as a new request with status "pending"
   const response = await api.post("/schedules/schedulerequests", {
     scheduleId,
     schedule: updatedSchedule,
