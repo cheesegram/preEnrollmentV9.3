@@ -7,7 +7,7 @@ import SelectField from "../components/ui/SelectField";
 import ActionButton from "../components/ui/ActionButton";
 import ScheduleSummaryCard from "../components/ui/ScheduleSummaryCard";
 import ScheduleTable from "../components/ScheduleTable";
-import { fetchSchedulePageData, fetchScheduleConflicts, saveScheduleTableChanges } from "../lib/scheduleRepository";
+import { fetchSchedulePageData, fetchScheduleConflicts, createScheduleRequest } from "../lib/scheduleRepository";
 
 const EDITABLE_ROW_FIELDS = [
   "days",
@@ -260,9 +260,9 @@ function Schedules() {
       return;
     }
 
-    try {
+        try {
       setSavingChanges(true);
-      await saveScheduleTableChanges({
+      await createScheduleRequest({
         scheduleId: uniqueScheduleIds[0],
         rowChanges: pendingRowPayload,
       });
@@ -285,10 +285,10 @@ function Schedules() {
       }
 
       clearEditingSession();
-      toast.success("Schedule changes saved");
+      toast.success("Schedule request sent successfully");
     } catch (error) {
       console.error("Failed to save schedule changes", error);
-      toast.error("Failed to save schedule changes");
+      toast.error("Failed to send schedule request");
     } finally {
       setSavingChanges(false);
     }
@@ -359,7 +359,7 @@ function Schedules() {
               </p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm sm:min-w-[16rem]">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Last Updated</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Last Request</p>
               <p className="mt-1 font-semibold text-slate-800">{lastUpdatedLabel || "—"}</p>
             </div>
           </div>

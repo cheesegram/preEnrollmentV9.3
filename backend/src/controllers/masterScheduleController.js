@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Schedule from '../models/Schedule.js';
+import ScheduleRequest from '../models/ScheduleRequest.js';
 import { isTimeOverlap } from '../utils/timeConstants.js';
 
 const curriculumSchema = new mongoose.Schema(
@@ -455,6 +456,35 @@ export async function patchScheduleClasses(req, res) {
     } catch (error) {
         console.error(`Error patching schedule classes (${req.params.id}):`, error);
         return res.status(500).json({ message: 'Internal server error while updating schedule classes.' });
+    }
+}
+
+export async function createScheduleRequest(req, res) {
+    try {
+        const { scheduleId, schedule, status } = req.body;
+
+        if (!scheduleId || !schedule) {
+            return res.status(400).json({ message: 'Request body must include scheduleId and schedule.' });
+        }
+
+        const request = new ScheduleRequest({
+            scheduleId,
+            schedule,
+            status: status || 'pending',
+        });
+
+        const savedRequest = await request.save();
+
+        return res.status(201).json({
+            message: 'Schedule request created successfully.',
+            requestId: savedRequest._id,
+            scheduleId: savedRequest.scheduleId,
+            status: savedRequest.status,
+            created_at: savedRequest.created_at,
+        });
+    } catch (error) {
+        console.error('Error creating schedule request:', error);
+        return res.status(500).json({ message: 'Internal server error while creating schedule request.' });
     }
 }
 

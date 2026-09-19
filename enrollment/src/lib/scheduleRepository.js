@@ -230,3 +230,76 @@ export async function saveScheduleTableChanges({ scheduleId, rowChanges }) {
   });
   return response.data;
 }
+
+function mapApiFieldsToRowFields(apiEntry) {
+  const result = {};
+  if (Array.isArray(apiEntry?.days)) {
+    result.days = apiEntry.days;
+  } else if (apiEntry?.day) {
+    result.days = [apiEntry.day];
+  }
+  if (apiEntry?.startTime != null) {
+    result.timeStart = formatTime(apiEntry.startTime);
+  }
+  if (apiEntry?.endTime != null) {
+    result.timeEnd = formatTime(apiEntry.endTime);
+  }
+  if (apiEntry?.roomName != null || apiEntry?.roomId != null) {
+    result.room = apiEntry.roomName ?? "";
+  }
+  if (apiEntry?.profName != null || apiEntry?.profId != null) {
+    result.instructor = apiEntry.profName ?? "";
+  }
+  return result;
+}
+
+export async function createScheduleRequest({ scheduleId, rowChanges }) {
+  if (!scheduleId) {
+    throw new Error("Missing schedule id for schedule request.");
+  }
+
+  const mappedUpdates = (Array.isArray(rowChanges) ? rowChanges : [])
+    .map((entry) => {
+      const mappedChanges = mapRowChangesToApiFields(entry?.changes ?? {});
+      return {
+        classIndex: entry?.classIndex,
+        changes: mappedChanges,
+      };
+    })
+    .filter((entry) =>
+      Number.isInteger(entry.classIndex) &&
+      entry.classIndex >= 0 &&
+      Object.keys(entry.changes).length > 0
+    );
+
+  if (mappedUpdates.length === 0) {
+    return { skipped: true };
+  }
+
+  // Fetch the original schedule to create a modified copy
+  const originalScheduleRes = await api.get(`/schedules/${scheduleId}`);
+  const originalSchedule = originalScheduleRes.data;
+
+  if (!originalSchedule || !Array.isArray(originalSchedule.classes)) {
+    throw new Error("Schedule not found or has no classes.");
+  }
+
+  // Build a shallow copy of the schedule with updated classes
+  const updatedSchedule = {
+    ...originalSchedule,
+    classes: originalSchedule.classes.map((classEntry, index) => {
+      const updateEntry = mappedUpdates.find((u) => u.classIndex === index);
+      if (!updateEntry) return { ...classEntry };
+      return { ...classEntry, ...updateEntry.changes };
+    }),
+  };
+
+  // POST the modified schedule copy as a new request with status "pending"
+    const response = await api.post("/schedules/schedulerequests", {
+    scheduleId,
+    schedule: updatedSchedule,
+    status: "pending",
+  });
+
+  return response.data;
+}
