@@ -133,8 +133,9 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
         lec: acc.lec + Number(sub.lecture || 0),
         lab: acc.lab + Number(sub.laboratory || 0),
         units: acc.units + Number(sub.units || 0),
+        hours: acc.hours + Number(sub.lecture || 0) + Number(sub.laboratory || 0),
       }),
-      { lec: 0, lab: 0, units: 0 }
+      { lec: 0, lab: 0, units: 0, hours: 0 }
     );
 
   const formatPrerequisites = (prerequisites) => {
@@ -142,6 +143,12 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
       return prerequisites.filter(Boolean).join(", ");
     }
     return String(prerequisites ?? "").trim();
+  };
+
+  const stripPreFromTitle = (title) => {
+    return String(title ?? "")
+      .replace(/\s*\(\s*pre\s*:.*?\)/gi, "")
+      .trim();
   };
 
   const parseCurriculumImportFile = async (file) => {
@@ -341,11 +348,12 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
         <div className="w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar">
           <table className="w-full table-fixed border-collapse text-sm">
             <colgroup>
-              <col className="w-[20%]" />
-              <col className="w-[40%]" />
-              <col className="w-[13.333%]" />
-              <col className="w-[13.333%]" />
-              <col className="w-[13.334%]" />
+              <col className="w-[17%]" />
+              <col className="w-[35%]" />
+              <col className="w-[12%]" />
+              <col className="w-[12%]" />
+              <col className="w-[12%]" />
+              <col className="w-[12%]" />
             </colgroup>
 
             <thead className="bg-[#E4F6E2] text-[#315B46] border-b border-[#BFD9BC]">
@@ -353,17 +361,20 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                 <th className="font-semibold uppercase py-3 px-3 sm:px-4 text-left whitespace-normal text-xs tracking-wider">
                   Code
                 </th>
-                <th className="font-semibold uppercase py-3 px-3 sm:px-4 text-left whitespace-normal text-xs tracking-wider">
+                <th className="font-semibold uppercase py-3 px-2 sm:px-3 text-left whitespace-normal text-xs tracking-wider">
                   Title
                 </th>
-                <th className="font-semibold uppercase py-3 px-2 sm:px-4 text-center whitespace-normal text-xs tracking-wider">
+                <th className="font-semibold uppercase py-3 px-2 sm:px-3 text-center whitespace-normal text-xs tracking-wider">
                   Lec
                 </th>
-                <th className="font-semibold uppercase py-3 px-2 sm:px-4 text-center whitespace-normal text-xs tracking-wider">
+                <th className="font-semibold uppercase py-3 px-2 sm:px-3 text-center whitespace-normal text-xs tracking-wider">
                   Lab
                 </th>
-                <th className="font-semibold uppercase py-3 px-2 sm:px-4 text-center whitespace-normal text-xs tracking-wider">
+                <th className="font-semibold uppercase py-3 px-2 sm:px-3 text-center whitespace-normal text-xs tracking-wider">
                   Units
+                </th>
+                <th className="font-semibold uppercase py-3 px-2 sm:px-3 text-center whitespace-normal text-xs tracking-wider">
+                  Hours
                 </th>
               </tr>
             </thead>
@@ -374,22 +385,25 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                   <td className="py-3 px-3 sm:px-4 text-gray-800 font-medium whitespace-normal break-words">
                     {sub.subject_code || sub.code || ""}
                   </td>
-                  <td className="py-3 px-3 sm:px-4 text-gray-600 break-words leading-relaxed">
-                    <div>{sub.title || ""}</div>
+                  <td className="py-3 px-2 sm:px-3 text-gray-600 break-words leading-relaxed">
+                    <div>{stripPreFromTitle(sub.title)}</div>
                     {formatPrerequisites(sub.prerequisites) && (
                       <div className="mt-0.5 text-xs text-gray-500">
                         (Pre: {formatPrerequisites(sub.prerequisites)})
                       </div>
                     )}
                   </td>
-                  <td className="py-3 px-2 sm:px-4 text-center text-gray-500 whitespace-nowrap">
+                  <td className="py-3 px-2 sm:px-3 text-center text-gray-500 whitespace-nowrap">
                     {sub.lecture || 0}
                   </td>
-                  <td className="py-3 px-2 sm:px-4 text-center text-gray-500 whitespace-nowrap">
+                  <td className="py-3 px-2 sm:px-3 text-center text-gray-500 whitespace-nowrap">
                     {sub.laboratory || 0}
                   </td>
-                  <td className="py-3 px-2 sm:px-4 text-center text-gray-900 font-semibold whitespace-nowrap">
+                  <td className="py-3 px-2 sm:px-3 text-center text-gray-900 font-semibold whitespace-nowrap">
                     {sub.units || 0}
+                  </td>
+                  <td className="py-3 px-2 sm:px-3 text-center text-gray-500 whitespace-nowrap">
+                    {Number(sub.lecture || 0) + Number(sub.laboratory || 0)}
                   </td>
                 </tr>
               ))}
@@ -400,14 +414,17 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                 <td colSpan={2} className="py-4 px-3 sm:px-5 text-right font-bold text-gray-500 text-xs tracking-widest uppercase">
                   Total
                 </td>
-                <td className="py-4 px-2 sm:px-4 text-center text-gray-700 font-bold">
+                <td className="py-4 px-2 sm:px-3 text-center text-gray-700 font-bold">
                   {totals.lec}
                 </td>
-                <td className="py-4 px-2 sm:px-4 text-center text-gray-700 font-bold">
+                <td className="py-4 px-2 sm:px-3 text-center text-gray-700 font-bold">
                   {totals.lab}
                 </td>
-                <td className="py-4 px-2 sm:px-4 text-center text-[#2E522A] font-bold text-base">
+                <td className="py-4 px-2 sm:px-3 text-center text-[#2E522A] font-bold text-base">
                   {totals.units}
+                </td>
+                <td className="py-4 px-2 sm:px-3 text-center text-gray-700 font-bold">
+                  {totals.hours}
                 </td>
               </tr>
             </tfoot>
@@ -582,6 +599,7 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                         <th className="px-4 py-3 text-center text-xs uppercase tracking-wider font-semibold">Lec</th>
                         <th className="px-4 py-3 text-center text-xs uppercase tracking-wider font-semibold">Lab</th>
                         <th className="px-4 py-3 text-center text-xs uppercase tracking-wider font-semibold">Units</th>
+                        <th className="px-4 py-3 text-center text-xs uppercase tracking-wider font-semibold">Hours</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -592,6 +610,7 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                           <td className="px-4 py-3 text-center text-gray-600">{subject.lecture ?? 0}</td>
                           <td className="px-4 py-3 text-center text-gray-600">{subject.laboratory ?? 0}</td>
                           <td className="px-4 py-3 text-center text-gray-800 font-semibold">{subject.units ?? 0}</td>
+                          <td className="px-4 py-3 text-center text-gray-600">{Number(subject.lecture ?? 0) + Number(subject.laboratory ?? 0)}</td>
                         </tr>
                       ))}
                     </tbody>
