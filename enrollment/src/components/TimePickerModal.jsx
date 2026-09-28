@@ -1,9 +1,24 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
-const HOURS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-const MINUTES = Array.from({ length: 61 }, (_, i) => String(i).padStart(2, "0"));
+// Hour clock numbers 1 to 12
+const CLOCK_HOURS = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+// Minute clock markers in 5-minute increments
+const CLOCK_MINUTES = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+
+// Common quick minute presets including 60
 const QUICK_MINUTES = ["00", "15", "30", "45", "60"];
+
+const CLOCK_RADIUS = 86; // Radius in pixels from center (120, 120)
+const CLOCK_CENTER = 120;
+
+function getCoordinatesForAngle(degrees, radius = CLOCK_RADIUS) {
+  const radians = (degrees * Math.PI) / 180;
+  const x = CLOCK_CENTER + radius * Math.sin(radians);
+  const y = CLOCK_CENTER - radius * Math.cos(radians);
+  return { x, y };
+}
 
 function parseTimeComponents(timeStr) {
   if (!timeStr) return null;
@@ -58,6 +73,7 @@ function TimePickerModal({
   const titleId = useId();
   const otherFieldLabel = fieldLabel === "Start" ? "End" : "Start";
 
+  const [activeView, setActiveView] = useState("hour"); // "hour" | "minute"
   const [selectedHour, setSelectedHour] = useState(8);
   const [selectedMinute, setSelectedMinute] = useState("00");
   const [selectedAmpm, setSelectedAmpm] = useState("AM");
@@ -66,13 +82,13 @@ function TimePickerModal({
   useEffect(() => {
     if (!isOpen) return;
 
+    setActiveView("hour");
     const parsed = parseTimeComponents(initialTime);
     if (parsed) {
       setSelectedHour(parsed.hour);
       setSelectedMinute(parsed.minute);
       setSelectedAmpm(parsed.ampm);
     } else {
-      // Sensible defaults if no existing time
       if (fieldLabel === "Start") {
         setSelectedHour(8);
         setSelectedMinute("00");
@@ -115,6 +131,18 @@ function TimePickerModal({
     return checkExactTimeMatch(currentFormattedTime, otherTime);
   }, [currentFormattedTime, otherTime]);
 
+  // Hand position calculations
+  const handTarget = useMemo(() => {
+    if (activeView === "hour") {
+      const angle = (selectedHour % 12) * 30;
+      return getCoordinatesForAngle(angle, CLOCK_RADIUS);
+    } else {
+      const minNum = parseInt(selectedMinute, 10) || 0;
+      const angle = (minNum % 60) * 6;
+      return getCoordinatesForAngle(angle, CLOCK_RADIUS);
+    }
+  }, [activeView, selectedHour, selectedMinute]);
+
   if (!isOpen) return null;
 
   const handleConfirm = () => {
@@ -122,8 +150,39 @@ function TimePickerModal({
     onConfirm?.(currentFormattedTime);
   };
 
+  const handleClockFaceClick = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clickX = event.clientX - rect.left - CLOCK_CENTER;
+    const clickY = event.clientY - rect.top - CLOCK_CENTER;
+
+    // Angle in degrees from 12 o'clock clockwise
+    let degrees = Math.atan2(clickX, -clickY) * (180 / Math.PI);
+    if (degrees < 0) degrees += 360;
+
+    if (activeView === "hour") {
+      let hour = Math.round(degrees / 30);
+      if (hour === 0) hour = 12;
+      setSelectedHour(hour);
+      // Automatically advance to minute view
+      setActiveView("minute");
+    } else {
+      let min = Math.round(degrees / 6);
+      if (min === 60) min = 0;
+      setSelectedMinute(String(min).padStart(2, "0"));
+    }
+  };
+
+  const adjustMinute = (delta) => {
+    let current = parseInt(selectedMinute, 10);
+    if (Number.isNaN(current)) current = 0;
+    let next = current + delta;
+    if (next < 0) next = 60;
+    if (next > 60) next = 0;
+    setSelectedMinute(String(next).padStart(2, "0"));
+  };
+
   return createPortal(
-    <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 sm:p-6">
+    <div className="fixed inset-0 z-[400] flex items-center justify-center p-3 sm:p-4">
       {/* Backdrop */}
       <button
         type="button"
@@ -140,18 +199,18 @@ function TimePickerModal({
         className="relative flex w-full max-w-sm flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl transition"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 bg-white px-5 py-4">
+        <div className="flex items-center justify-between border-b border-slate-100 bg-white px-5 py-3.5">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-800">
               <i className="fa-regular fa-clock text-base" />
             </div>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-                12-Hour Format
+                Clock Time Picker
               </p>
               <h2
                 id={titleId}
-                className="text-lg font-extrabold tracking-tight text-slate-900"
+                className="text-base font-extrabold tracking-tight text-slate-900"
               >
                 Select {fieldLabel} Time
               </h2>
@@ -160,7 +219,7 @@ function TimePickerModal({
           <button
             type="button"
             onClick={onClose}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             aria-label="Close"
           >
             <i className="fa-solid fa-xmark text-sm" />
@@ -168,87 +227,53 @@ function TimePickerModal({
         </div>
 
         {/* Content */}
-        <div className="flex flex-col gap-5 p-5">
+        <div className="flex flex-col gap-4 p-4 sm:p-5">
           {subjectCode ? (
-            <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+            <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">
               <span className="font-bold text-slate-800">{subjectCode}</span>
               {subjectTitle ? <span className="truncate text-slate-400">• {subjectTitle}</span> : null}
             </div>
           ) : null}
 
-          {/* Time Display Card */}
-          <div className="flex flex-col items-center justify-center rounded-2xl border border-emerald-100 bg-[#f4fbf3] py-4 px-3 shadow-inner">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800/80">
-              Selected {fieldLabel} Time
-            </span>
-            <div className="mt-1 font-mono text-3xl font-extrabold tracking-tight text-slate-900">
-              {String(selectedHour).padStart(2, "0")} : {selectedMinute}{" "}
-              <span className="text-xl font-bold text-emerald-800">{selectedAmpm}</span>
-            </div>
-            {otherTime ? (
-              <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
-                <span>{otherFieldLabel} Time:</span>
-                <span className="font-bold text-slate-700">{otherTime}</span>
-              </div>
-            ) : null}
-          </div>
+          {/* Digital Time & Mode Switcher */}
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-emerald-100 bg-[#f4fbf3] p-3 shadow-inner">
+            <div className="flex items-center gap-2">
+              {/* Hour Digits Button */}
+              <button
+                type="button"
+                onClick={() => setActiveView("hour")}
+                className={`rounded-xl px-3.5 py-1.5 font-mono text-2xl sm:text-3xl font-extrabold tracking-tight transition ${
+                  activeView === "hour"
+                    ? "bg-emerald-800 text-white shadow-md ring-2 ring-emerald-600/30"
+                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+                title="Click to select Hour"
+              >
+                {String(selectedHour).padStart(2, "0")}
+              </button>
 
-          {/* Selectors */}
-          <div className="grid grid-cols-3 gap-2.5">
-            {/* Hour Selector (1 - 12) */}
-            <div>
-              <label
-                htmlFor="timepicker-hour"
-                className="block text-[11px] font-bold uppercase tracking-wider text-slate-500"
-              >
-                Hour (1-12)
-              </label>
-              <select
-                id="timepicker-hour"
-                value={selectedHour}
-                onChange={(e) => setSelectedHour(Number(e.target.value))}
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-center text-sm font-bold text-slate-800 shadow-sm transition hover:border-slate-300 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-              >
-                {HOURS.map((hour) => (
-                  <option key={hour} value={hour}>
-                    {hour} ({String(hour).padStart(2, "0")})
-                  </option>
-                ))}
-              </select>
-            </div>
+              <span className="font-mono text-2xl font-bold text-slate-400">:</span>
 
-            {/* Minute Selector (00 - 60) */}
-            <div>
-              <label
-                htmlFor="timepicker-minute"
-                className="block text-[11px] font-bold uppercase tracking-wider text-slate-500"
+              {/* Minute Digits Button */}
+              <button
+                type="button"
+                onClick={() => setActiveView("minute")}
+                className={`rounded-xl px-3.5 py-1.5 font-mono text-2xl sm:text-3xl font-extrabold tracking-tight transition ${
+                  activeView === "minute"
+                    ? "bg-emerald-800 text-white shadow-md ring-2 ring-emerald-600/30"
+                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+                title="Click to select Minute"
               >
-                Minute (00-60)
-              </label>
-              <select
-                id="timepicker-minute"
-                value={selectedMinute}
-                onChange={(e) => setSelectedMinute(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-center text-sm font-bold text-slate-800 shadow-sm transition hover:border-slate-300 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-              >
-                {MINUTES.map((min) => (
-                  <option key={min} value={min}>
-                    {min}
-                  </option>
-                ))}
-              </select>
-            </div>
+                {selectedMinute}
+              </button>
 
-            {/* AM / PM Selector */}
-            <div>
-              <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                Period
-              </span>
-              <div className="mt-1 flex h-[42px] rounded-xl border border-slate-200 bg-slate-100 p-1">
+              {/* AM / PM Toggle */}
+              <div className="ml-1.5 flex flex-col rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm">
                 <button
                   type="button"
                   onClick={() => setSelectedAmpm("AM")}
-                  className={`flex-1 rounded-lg text-xs font-bold transition ${
+                  className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
                     selectedAmpm === "AM"
                       ? "bg-emerald-800 text-white shadow-sm"
                       : "text-slate-600 hover:text-slate-900"
@@ -259,7 +284,7 @@ function TimePickerModal({
                 <button
                   type="button"
                   onClick={() => setSelectedAmpm("PM")}
-                  className={`flex-1 rounded-lg text-xs font-bold transition ${
+                  className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
                     selectedAmpm === "PM"
                       ? "bg-emerald-800 text-white shadow-sm"
                       : "text-slate-600 hover:text-slate-900"
@@ -269,34 +294,170 @@ function TimePickerModal({
                 </button>
               </div>
             </div>
+
+            {/* Other box reference */}
+            {otherTime ? (
+              <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                <span>{otherFieldLabel} Time:</span>
+                <span className="font-bold text-slate-700">{otherTime}</span>
+              </div>
+            ) : null}
           </div>
 
-          {/* Quick Minute Presets */}
-          <div>
-            <p className="text-[11px] font-semibold text-slate-400">Quick Minute Presets</p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {QUICK_MINUTES.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setSelectedMinute(m)}
-                  className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
-                    selectedMinute === m
-                      ? "border-emerald-600 bg-emerald-50 text-emerald-900"
-                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  :{m}
-                </button>
-              ))}
+          {/* Mode Tabs */}
+          <div className="flex rounded-xl bg-slate-100 p-1">
+            <button
+              type="button"
+              onClick={() => setActiveView("hour")}
+              className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${
+                activeView === "hour"
+                  ? "bg-white text-emerald-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              Hour (1 - 12)
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView("minute")}
+              className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${
+                activeView === "minute"
+                  ? "bg-white text-emerald-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              Minute (00 - 60)
+            </button>
+          </div>
+
+          {/* Circular Clock Face */}
+          <div className="flex flex-col items-center justify-center">
+            <div
+              onClick={handleClockFaceClick}
+              className="relative h-60 w-60 cursor-pointer select-none rounded-full border-2 border-slate-200/90 bg-slate-50/90 shadow-inner transition hover:border-emerald-300"
+              title={activeView === "hour" ? "Click to set Hour" : "Click to set Minute"}
+            >
+              {/* SVG Clock Hand & Pivot */}
+              <svg className="pointer-events-none absolute inset-0 h-full w-full">
+                {/* Center Pivot */}
+                <circle cx={CLOCK_CENTER} cy={CLOCK_CENTER} r="4" fill="#065f46" />
+                {/* Clock Hand */}
+                <line
+                  x1={CLOCK_CENTER}
+                  y1={CLOCK_CENTER}
+                  x2={handTarget.x}
+                  y2={handTarget.y}
+                  stroke="#065f46"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                />
+                {/* Hand Tip indicator */}
+                <circle cx={handTarget.x} cy={handTarget.y} r="18" fill="#065f46" opacity="0.15" />
+              </svg>
+
+              {/* Clock Numbers */}
+              {activeView === "hour"
+                ? CLOCK_HOURS.map((hour) => {
+                    const angle = (hour % 12) * 30;
+                    const { x, y } = getCoordinatesForAngle(angle);
+                    const isSelected = selectedHour === hour;
+
+                    return (
+                      <button
+                        key={hour}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedHour(hour);
+                          setActiveView("minute");
+                        }}
+                        style={{ left: `${x}px`, top: `${y}px` }}
+                        className={`absolute -translate-x-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition ${
+                          isSelected
+                            ? "bg-emerald-800 text-white shadow-md scale-110"
+                            : "text-slate-700 hover:bg-emerald-100 hover:text-emerald-900"
+                        }`}
+                      >
+                        {hour}
+                      </button>
+                    );
+                  })
+                : CLOCK_MINUTES.map((min) => {
+                    const angle = (min % 60) * 6;
+                    const { x, y } = getCoordinatesForAngle(angle);
+                    const isSelected = parseInt(selectedMinute, 10) === min;
+
+                    return (
+                      <button
+                        key={min}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedMinute(String(min).padStart(2, "0"));
+                        }}
+                        style={{ left: `${x}px`, top: `${y}px` }}
+                        className={`absolute -translate-x-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition ${
+                          isSelected
+                            ? "bg-emerald-800 text-white shadow-md scale-110"
+                            : "text-slate-700 hover:bg-emerald-100 hover:text-emerald-900"
+                        }`}
+                      >
+                        {String(min).padStart(2, "0")}
+                      </button>
+                    );
+                  })}
             </div>
+
+            {/* Minute Controls (Presets & Stepper) */}
+            {activeView === "minute" ? (
+              <div className="mt-3 flex w-full flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-slate-400">Quick Minutes:</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => adjustMinute(-1)}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-xs font-bold text-slate-600 shadow-sm hover:bg-slate-50"
+                      title="Decrease by 1 minute"
+                    >
+                      -1m
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => adjustMinute(1)}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-xs font-bold text-slate-600 shadow-sm hover:bg-slate-50"
+                      title="Increase by 1 minute"
+                    >
+                      +1m
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                  {QUICK_MINUTES.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setSelectedMinute(m)}
+                      className={`rounded-lg border px-2.5 py-1 text-xs font-bold transition ${
+                        selectedMinute === m
+                          ? "border-emerald-600 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-500/20"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                      }`}
+                    >
+                      :{m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {/* Exact Match Warning */}
           {isExactMatch ? (
             <div
               role="alert"
-              className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 animate-in fade-in"
+              className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-800 animate-in fade-in"
             >
               <i className="fa-solid fa-triangle-exclamation mt-0.5 shrink-0 text-sm text-rose-500" />
               <div>
@@ -311,7 +472,7 @@ function TimePickerModal({
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 bg-slate-50 px-5 py-3.5">
+        <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 bg-slate-50 px-5 py-3">
           <button
             type="button"
             onClick={onClose}
