@@ -208,7 +208,7 @@ function parseMeridiemTimeToMinutes(value) {
 
   const hours = Number(match[1]);
   const minutes = Number(match[2]);
-  if (Number.isNaN(hours) || Number.isNaN(minutes) || hours < 1 || hours > 12 || minutes < 0 || minutes > 59) {
+  if (Number.isNaN(hours) || Number.isNaN(minutes) || hours < 1 || hours > 12 || minutes < 0 || minutes > 60) {
     return null;
   }
 

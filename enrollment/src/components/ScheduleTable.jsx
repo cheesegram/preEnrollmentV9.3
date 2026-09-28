@@ -1,4 +1,15 @@
 import { useMemo, useState } from "react";
+import TimePickerModal from "./TimePickerModal";
+
+const DAYS_OF_WEEK = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
 
 function ScheduleTable({
   rows = [],
@@ -7,23 +18,21 @@ function ScheduleTable({
   isRowDirty,
 }) {
   const [activeCell, setActiveCell] = useState(null);
+  const [timePickerTarget, setTimePickerTarget] = useState(null);
 
   const scheduleRows = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
+
+  const activeTimeRow = useMemo(
+    () => scheduleRows.find((entry) => entry.id === timePickerTarget?.rowId),
+    [scheduleRows, timePickerTarget]
+  );
 
   const handleChange = (rowId, field, value) => {
     onRowChange?.(rowId, field, value);
   };
 
-  const handleDayChange = (rowId, day, checked) => {
-    const row = scheduleRows.find((entry) => entry.id === rowId);
-    const nextDays = Array.isArray(row?.days) ? [...row.days] : [];
-    if (checked) {
-      if (!nextDays.includes(day)) nextDays.push(day);
-    } else {
-      const index = nextDays.indexOf(day);
-      if (index >= 0) nextDays.splice(index, 1);
-    }
-    handleChange(rowId, "days", nextDays);
+  const handleDayRadioChange = (rowId, day) => {
+    handleChange(rowId, "days", [day]);
   };
 
   return (
@@ -36,7 +45,7 @@ function ScheduleTable({
               <th className="px-4 py-4 text-xs font-bold uppercase tracking-[0.15em]">Subject Title</th>
               <th className="px-4 py-4 text-xs font-bold uppercase tracking-[0.15em]">Units</th>
               <th className="px-4 py-4 text-xs font-bold uppercase tracking-[0.15em]">Days</th>
-              <th className="px-4 py-4 text-xs font-bold uppercase tracking-[0.15em]">Time</th>
+              <th className="px-4 py-4 text-xs font-bold uppercase tracking-[0.15em] min-w-[240px]">Time</th>
               <th className="px-4 py-4 text-xs font-bold uppercase tracking-[0.15em]">Room</th>
               <th className="px-4 py-4 text-xs font-bold uppercase tracking-[0.15em]">Instructor</th>
             </tr>
@@ -44,7 +53,8 @@ function ScheduleTable({
           <tbody className="divide-y divide-slate-100">
             {scheduleRows.length > 0 ? (
               scheduleRows.map((row) => {
-                const rowDays = Array.isArray(row.days) ? row.days : [];
+                const rowDays = Array.isArray(row.days) ? row.days : row.days ? [row.days] : [];
+                const selectedDay = rowDays[0] ?? "";
                 const timeValue = `${row.timeStart ?? ""} - ${row.timeEnd ?? ""}`.trim();
                 const hasChanges = Boolean(isRowDirty?.(row.id));
 
@@ -71,33 +81,42 @@ function ScheduleTable({
                     <td className="px-4 py-4">
                       {isEditingEnabled ? (
                         <div className="flex flex-wrap gap-2">
-                          {[
-                            "Monday",
-                            "Tuesday",
-                            "Wednesday",
-                            "Thursday",
-                            "Friday",
-                            "Saturday",
-                            "Sunday",
-                          ].map((day) => (
-                            <label key={day} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm">
-                              <input
-                                type="checkbox"
-                                checked={rowDays.includes(day)}
-                                onChange={(event) => handleDayChange(row.id, day, event.target.checked)}
-                                className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-800 focus:ring-emerald-500/15"
-                              />
-                              {day.slice(0, 3)}
-                            </label>
-                          ))}
+                          {DAYS_OF_WEEK.map((day) => {
+                            const isSelected = selectedDay === day;
+                            return (
+                              <label
+                                key={day}
+                                className={`inline-flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm transition ${
+                                  isSelected
+                                    ? "border-emerald-600 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-500/20"
+                                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name={`day-radio-${row.id}`}
+                                  value={day}
+                                  checked={isSelected}
+                                  onChange={() => handleDayRadioChange(row.id, day)}
+                                  className="h-3.5 w-3.5 border-slate-300 text-emerald-800 accent-emerald-800 focus:ring-emerald-500/20 cursor-pointer"
+                                />
+                                {day.slice(0, 3)}
+                              </label>
+                            );
+                          })}
                         </div>
                       ) : (
                         <div className="flex min-h-11 flex-wrap gap-2">
-                          {rowDays.length > 0 ? rowDays.map((day) => (
-                            <span key={day} className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm">
-                              {day.slice(0, 3)}
-                            </span>
-                          )) : (
+                          {rowDays.length > 0 ? (
+                            rowDays.map((day) => (
+                              <span
+                                key={day}
+                                className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm"
+                              >
+                                {day.slice(0, 3)}
+                              </span>
+                            ))
+                          ) : (
                             <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500 shadow-sm">
                               None
                             </span>
@@ -105,21 +124,60 @@ function ScheduleTable({
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-4 text-slate-700">
+                    <td className="px-4 py-4 text-slate-700 min-w-[240px]">
                       {isEditingEnabled ? (
-                        <input
-                          value={timeValue}
-                          onChange={(event) => {
-                            const [startTime = "", endTime = ""] = String(event.target.value).split("-").map((part) => part.trim());
-                            handleChange(row.id, "timeStart", startTime);
-                            handleChange(row.id, "timeEnd", endTime);
-                          }}
-                          onFocus={() => setActiveCell(`${row.id}-time`)}
-                          className={`w-full rounded-lg border px-3 py-2 text-sm outline-none transition ${activeCell === `${row.id}-time` ? "border-emerald-500 ring-4 ring-emerald-500/10" : "border-transparent bg-slate-50 hover:border-slate-200"}`}
-                        />
+                        <div className="flex items-center gap-2">
+                          {/* Start Box */}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setTimePickerTarget({
+                                rowId: row.id,
+                                field: "timeStart",
+                              })
+                            }
+                            className="group flex flex-1 items-center justify-between gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm transition hover:border-emerald-500 hover:bg-emerald-50/40 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                            title="Click to set Start Time"
+                          >
+                            <div className="min-w-0">
+                              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 group-hover:text-emerald-700">
+                                Start
+                              </span>
+                              <span className="block truncate text-xs font-semibold text-slate-800">
+                                {row.timeStart || "Set Time"}
+                              </span>
+                            </div>
+                            <i className="fa-regular fa-clock text-xs text-slate-400 group-hover:text-emerald-600 shrink-0" />
+                          </button>
+
+                          <span className="text-xs font-bold text-slate-300">-</span>
+
+                          {/* End Box */}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setTimePickerTarget({
+                                rowId: row.id,
+                                field: "timeEnd",
+                              })
+                            }
+                            className="group flex flex-1 items-center justify-between gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm transition hover:border-emerald-500 hover:bg-emerald-50/40 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                            title="Click to set End Time"
+                          >
+                            <div className="min-w-0">
+                              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 group-hover:text-emerald-700">
+                                End
+                              </span>
+                              <span className="block truncate text-xs font-semibold text-slate-800">
+                                {row.timeEnd || "Set Time"}
+                              </span>
+                            </div>
+                            <i className="fa-regular fa-clock text-xs text-slate-400 group-hover:text-emerald-600 shrink-0" />
+                          </button>
+                        </div>
                       ) : (
                         <div className="min-h-11 rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-700">
-                          {timeValue}
+                          {timeValue || "—"}
                         </div>
                       )}
                     </td>
@@ -155,7 +213,6 @@ function ScheduleTable({
                         </div>
                       )}
                     </td>
-
                   </tr>
                 );
               })
@@ -172,6 +229,30 @@ function ScheduleTable({
           </tbody>
         </table>
       </div>
+
+      {timePickerTarget ? (
+        <TimePickerModal
+          isOpen={Boolean(timePickerTarget)}
+          onClose={() => setTimePickerTarget(null)}
+          onConfirm={(formattedTime) => {
+            handleChange(timePickerTarget.rowId, timePickerTarget.field, formattedTime);
+            setTimePickerTarget(null);
+          }}
+          initialTime={
+            timePickerTarget.field === "timeStart"
+              ? activeTimeRow?.timeStart
+              : activeTimeRow?.timeEnd
+          }
+          otherTime={
+            timePickerTarget.field === "timeStart"
+              ? activeTimeRow?.timeEnd
+              : activeTimeRow?.timeStart
+          }
+          fieldLabel={timePickerTarget.field === "timeStart" ? "Start" : "End"}
+          subjectCode={activeTimeRow?.subjectCode}
+          subjectTitle={activeTimeRow?.subjectTitle}
+        />
+      ) : null}
     </div>
   );
 }
