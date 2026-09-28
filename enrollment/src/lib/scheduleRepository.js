@@ -229,7 +229,6 @@ function mapRowChangesToApiFields(changes) {
 
   if (Object.prototype.hasOwnProperty.call(changes, "days")) {
     const normalizedDays = normalizeDayList(changes.days);
-    payload.days = normalizedDays;
     payload.day = normalizedDays[0] ?? "";
   }
 
