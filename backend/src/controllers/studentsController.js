@@ -1,6 +1,7 @@
 import Student from "../models/Student.js";
 import Section from "../models/Section.js";
 import Schedule from "../models/Schedule.js";
+import StudentScheduleArchive from "../models/StudentScheduleArchive.js";
 import Subject from "../models/Subject.js";
 import { generateStudentCORPdf, generateSectionBatchCORPdf } from "../services/pdfService.js";
 import mongoose from "mongoose";
@@ -560,7 +561,11 @@ export async function getAllStudents(req, res) {
     }
     if (section && section !== 'All') query.section = section;
     if (semester && semester !== 'All') query.semester = semester;
-    const students = await Student.find(query).sort({ createdAt: -1 });
+    const [students, schedules] = await Promise.all([
+      Student.find(query).sort({ createdAt: -1 }).lean(),
+      Schedule.find({}).sort({ generated_at: -1, createdAt: -1 }).lean(),
+    ]);
+    await archiveStudentSchedules(students, schedules);
     res.status(200).json(students);
   } catch (error) {
     console.error("Error in getAllStudents controller", error);
@@ -1381,7 +1386,7 @@ export async function importStudents(req, res) {
 /**
  * Helper to match scheduled classes from the database to a student's assigned year & section.
  */
-function findClassesForStudent(student, schedules = []) {
+function findScheduleForStudent(student, schedules = []) {
   if (!student) return [];
   const rawYear = normalizeText(student.year);
   const rawSection = normalizeText(student.section).toUpperCase();
@@ -1414,22 +1419,73 @@ function findClassesForStudent(student, schedules = []) {
     });
 
     if (matchingClasses.length > 0) {
-      return matchingClasses;
+      return { ...sched, classes: matchingClasses };
     }
   }
 
   // Fallback: search classes directly if flattened
-  const allMatching = [];
   for (const sched of schedules) {
     const classes = Array.isArray(sched?.classes) ? sched.classes : [];
     for (const c of classes) {
       const cSec = String(c?.sectionName ?? c?.section ?? "").trim().toUpperCase();
       if (candidateKeys.has(cSec)) {
-        allMatching.push(c);
+        return { ...sched, classes: [c] };
       }
     }
   }
-  return allMatching;
+  return null;
+}
+
+function findClassesForStudent(student, schedules = []) {
+  return findScheduleForStudent(student, schedules)?.classes ?? [];
+}
+
+function buildStudentScheduleArchive(student, classes) {
+  const archive = {
+    studentNumber: student.studentNumber,
+    schoolYear: student.schoolYear,
+    year: student.year,
+    section: student.section,
+    semester: student.semester,
+    status: student.status,
+    firstName: student.firstName,
+    middleName: student.middleName,
+    lastName: student.lastName,
+    suffix: student.suffix,
+    classes,
+  };
+
+  if (isIrregularStatus(student.status)) {
+    archive.irregularYear = student.irregularYear;
+    archive.irregularSection = student.irregularSection;
+  }
+
+  return archive;
+}
+
+function valuesMatch(left, right) {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+async function archiveStudentSchedule(student, schedules) {
+  const schedule = findScheduleForStudent(student, schedules);
+  if (!schedule?.classes?.length || !student?.studentNumber) return;
+
+  const archive = buildStudentScheduleArchive(student, schedule.classes);
+  const latestArchive = await StudentScheduleArchive.findOne({ studentNumber: student.studentNumber })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const archiveFields = Object.keys(archive);
+  if (latestArchive && archiveFields.every((field) => valuesMatch(latestArchive[field], archive[field]))) {
+    return;
+  }
+
+  await StudentScheduleArchive.create(archive);
+}
+
+async function archiveStudentSchedules(students, schedules) {
+  await Promise.all(students.map((student) => archiveStudentSchedule(student, schedules)));
 }
 
 /**
@@ -1456,6 +1512,7 @@ export async function exportStudentPdf(req, res) {
     ]);
 
     const studentClasses = findClassesForStudent(student, schedules);
+    await archiveStudentSchedule(student, schedules);
     const pdfBuffer = await generateStudentCORPdf(student, studentClasses, subjects);
 
     const safeName = `${student.studentNumber || "student"}_${student.lastName || ""}_${student.firstName || ""}`
@@ -1500,6 +1557,7 @@ export async function exportSectionPdf(req, res) {
       Schedule.find({}).sort({ generated_at: -1, createdAt: -1 }).lean(),
       Subject.find({}).lean(),
     ]);
+    await archiveStudentSchedules(students, schedules);
 
     const pdfBuffer = await generateSectionBatchCORPdf(
       students,
