@@ -69,7 +69,7 @@ function getScheduleYear(schedule, classEntry) {
     const explicitYear = String(schedule?.year ?? '').trim();
     if (explicitYear) return explicitYear;
 
-    const sectionMatch = String(classEntry?.sectionName ?? '').match(/(?:^|-)([1-4])[A-Za-z]+$/i);
+    const sectionMatch = String(classEntry?.sectionName ?? '').match(/(?:^|[-_/\s])([1-4])\s*[-_/\s]?\s*[A-Za-z]+/i);
     if (sectionMatch) return sectionMatch[1];
 
     return String(schedule?.curriculum_id ?? '').match(/curriculum_([1-4])/i)?.[1] ?? '';
