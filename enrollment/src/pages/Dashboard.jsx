@@ -1013,8 +1013,10 @@ function Dashboard() {
                                         <table className="min-w-full border-collapse text-left text-sm md:text-base whitespace-nowrap">
                                             <thead className="sticky top-0 z-10 bg-gray-50 text-gray-700">
                                                 <tr>
-                                                    <th className="px-6 py-4 font-semibold text-xs uppercase tracking-wider text-gray-500 border-b border-gray-200">Applicant ID</th>
-                                                    <th className="px-6 py-4 font-semibold text-xs uppercase tracking-wider text-gray-500 border-b border-gray-200">Applicant Name</th>
+                                                    <th className="px-6 py-4 font-semibold text-xs uppercase tracking-wider text-gray-500 border-b border-gray-200">
+                                                        {selectedSectionGroup.applicants.some((applicant) => applicant.isAdvisingRecord) ? "Student Number" : "Applicant ID"}
+                                                    </th>
+                                                    <th className="px-6 py-4 font-semibold text-xs uppercase tracking-wider text-gray-500 border-b border-gray-200">Student Name</th>
                                                     <th className="px-6 py-4 font-semibold text-xs uppercase tracking-wider text-gray-500 text-center border-b border-gray-200">Curriculum</th>
                                                     <th className="px-6 py-4 font-semibold text-xs uppercase tracking-wider text-gray-500 text-center border-b border-gray-200">Status</th>
                                                     <th className="px-6 py-4 font-semibold text-xs uppercase tracking-wider text-gray-500 text-center border-b border-gray-200">Action</th>
@@ -1023,7 +1025,9 @@ function Dashboard() {
                                             <tbody className="divide-y divide-gray-100">
                                                 {selectedSectionGroup.applicants.map((applicant, index) => (
                                                     <tr key={`${applicant.applicantID || 'applicant'}-${index}`} className="hover:bg-gray-50/80 transition-colors">
-                                                        <td className="px-6 py-4 font-medium text-gray-900">{applicant.applicantID || '-'}</td>
+                                                        <td className="px-6 py-4 font-medium text-gray-900">
+                                                            {applicant.isAdvisingRecord ? (applicant.studentNumber || applicant.applicantID || '-') : (applicant.applicantID || '-')}
+                                                        </td>
                                                         <td className="px-6 py-4 text-gray-800">{applicant.applicant_name || '-'}</td>
                                                         <td className="px-6 py-4 text-center">
                                                             <button

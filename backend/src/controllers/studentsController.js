@@ -61,6 +61,10 @@ function getApplicantStudentNumber(applicant = {}) {
   return rawId.replace(/^A-?/i, "");
 }
 
+function normalizeApplicantNumber(value) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
 function buildApplicantSearchConditions(applicantID) {
   const searchConditions = [
     { applicantId: applicantID },
@@ -156,6 +160,90 @@ async function findAdvisingRecordForApplicant(applicantID, applicant) {
   );
   if (conditions.length === 0) return null;
   return AdvisingRecord.findOne({ $or: conditions }).lean();
+}
+
+async function findAdvisingRecordForStudent(studentNumber) {
+  const AdvisingRecord = getDbModel("AdvisingRecord", "advisingrecords");
+  const normalizedStudentNumber = normalizeApplicantNumber(studentNumber);
+  if (!normalizedStudentNumber) return null;
+
+  const records = await AdvisingRecord.find({
+    enrollmentStatus: { $not: /^enrolled$/i },
+    applicantID: { $exists: true, $ne: null },
+  }).lean();
+  return records.find((record) => normalizeApplicantNumber(record.applicantID) === normalizedStudentNumber) ?? null;
+}
+
+function formatAdvisingCandidate(student, advisingRecord) {
+  return {
+    applicantID: String(advisingRecord.applicantID ?? "").trim(),
+    studentNumber: String(student.studentNumber ?? "").trim(),
+    applicant_name: `${String(student.firstName ?? "").trim()} ${String(student.lastName ?? "").trim()}`.trim(),
+    status: String(advisingRecord.status ?? student.status ?? "").trim(),
+    year: String(advisingRecord.year ?? "").trim(),
+    section: String(advisingRecord.section ?? "").trim(),
+    semester: String(advisingRecord.semester ?? "").trim(),
+    isIrregular: false,
+    isAdvisingRecord: true,
+  };
+}
+
+async function findAdvisingCandidate(applicantID) {
+  const advisingRecord = await findAdvisingRecordForStudent(applicantID);
+  if (!advisingRecord) return null;
+  const studentNumber = normalizeApplicantNumber(advisingRecord.applicantID);
+  const student = await Student.findOne({
+    studentNumber: { $in: [studentNumber, String(applicantID ?? "").trim()] },
+  }).lean();
+  if (!student) return null;
+  return { student, advisingRecord, studentNumber: student.studentNumber };
+}
+
+async function prepareAdvisingEnrollmentPayload({ student, advisingRecord, sectionGroups, selectedSection }) {
+  const enrollmentYear = normalizeText(advisingRecord.year);
+  const enrollmentSemester = normalizeSemester(advisingRecord.semester);
+  if (!enrollmentYear || enrollmentSemester === "N/A") {
+    return {
+      ok: false,
+      reason: "invalid_advising_record",
+      message: "Enrollment blocked: Advising record must include year and semester",
+    };
+  }
+
+  const enrollmentStatus = normalizeText(advisingRecord.status).toLowerCase();
+  const enrollmentStudent = {
+    ...student,
+    year: enrollmentYear,
+    semester: enrollmentSemester,
+    status: enrollmentStatus === "regular" ? "Block" : normalizeText(student.status) || "Block",
+  };
+  const chosenSection = selectedSection
+    ? ensureSectionState(sectionGroups, enrollmentYear, enrollmentSemester, selectedSection)
+    : chooseSectionForStudent(sectionGroups, enrollmentStudent);
+  if (!isIrregularStatus(enrollmentStudent.status)) {
+    const requiredBlockCapacity = Number(chosenSection.blockCount ?? 0) + 1;
+    if (requiredBlockCapacity > Number(chosenSection.blockCapacity ?? 0)) {
+      chosenSection.blockCapacity = requiredBlockCapacity;
+      chosenSection.totalCapacity = Math.max(
+        Number(chosenSection.totalCapacity ?? 0),
+        chosenSection.blockCapacity + Number(chosenSection.irregularCapacity ?? 0)
+      );
+    }
+  }
+  addStudentToSectionState(chosenSection, enrollmentStudent.status);
+
+  return {
+    ok: true,
+    student: {
+      ...student,
+      year: enrollmentYear,
+      semester: enrollmentSemester,
+      section: chosenSection.section,
+      status: enrollmentStudent.status,
+    },
+    chosenSection,
+    isIrregular: false,
+  };
 }
 
 function buildIrregularMetaFromAdvising(advisingRecord = {}, enrollmentSemester = "") {
@@ -609,6 +697,30 @@ export async function getPendingApplicants(req, res) {
 
 export async function getApplicantsForEnrollment(req, res) {
   try {
+    const AdvisingRecord = getDbModel("AdvisingRecord", "advisingrecords");
+    const [students, advisingRecords] = await Promise.all([
+      Student.find({ studentNumber: { $exists: true, $ne: "" } }).lean(),
+      AdvisingRecord.find({
+        enrollmentStatus: { $not: /^enrolled$/i },
+        applicantID: { $exists: true, $ne: null },
+      }).lean(),
+    ]);
+    const studentsByNumber = new Map(
+      students.map((student) => [normalizeApplicantNumber(student.studentNumber), student])
+    );
+    const advisingCandidates = advisingRecords
+      .map((record) => {
+        const student = studentsByNumber.get(normalizeApplicantNumber(record.applicantID));
+        return student ? formatAdvisingCandidate(student, record) : null;
+      })
+      .filter(Boolean);
+
+    if (advisingRecords.length > 0) {
+      return res.status(200).json(advisingCandidates);
+    }
+
+    // Keep the existing applicant workflow available when no advising-linked
+    // student records are present.
     const Applicant = getDbModel("Applicant", "applicants");
     // Only fetch applicants that have section, year, semester AND status === "Confirmed"
     const applicants = await Applicant.find(
@@ -881,12 +993,22 @@ export async function enrollFromApplicant(req, res) {
  * Helper: find an applicant by ID from the applicants collection.
  */
 async function findApplicantForEnrollment(applicantID) {
+  const advisingCandidate = await findAdvisingCandidate(applicantID);
+  if (advisingCandidate) {
+    return {
+      applicant: advisingCandidate.student,
+      advisingRecord: advisingCandidate.advisingRecord,
+      studentNumber: advisingCandidate.studentNumber,
+      isAdvisingRecord: true,
+    };
+  }
+
   const searchConditions = buildApplicantSearchConditions(applicantID);
   const Applicant = getDbModel("Applicant", "applicants");
   const applicant = await Applicant.findOne({ $or: searchConditions }).lean();
   if (!applicant) return null;
   const { studentNumber } = getEnrollmentIdentityPayload(applicant, applicantID);
-  return { applicant, studentNumber };
+  return { applicant, studentNumber, isAdvisingRecord: false };
 }
 
 export async function batchEnrollPreview(req, res) {
@@ -904,9 +1026,9 @@ export async function batchEnrollPreview(req, res) {
         preview.notFound.push({ applicantID });
         continue;
       }
-      const { applicant, studentNumber } = found;
+      const { applicant, advisingRecord, studentNumber, isAdvisingRecord } = found;
 
-      const existingStudent = await Student.findOne({ studentNumber }).lean();
+      const existingStudent = isAdvisingRecord ? null : await Student.findOne({ studentNumber }).lean();
       if (existingStudent) {
         preview.blocked.push({
           applicantID,
@@ -917,7 +1039,9 @@ export async function batchEnrollPreview(req, res) {
         continue;
       }
 
-      const enrollmentPlan = await prepareEnrollmentPayload({ applicant, applicantID, sectionGroups });
+      const enrollmentPlan = isAdvisingRecord
+        ? await prepareAdvisingEnrollmentPayload({ student: applicant, advisingRecord, sectionGroups })
+        : await prepareEnrollmentPayload({ applicant, applicantID, sectionGroups });
       if (!enrollmentPlan.ok) {
         preview.blocked.push({
           applicantID,
@@ -964,7 +1088,7 @@ export async function batchEnrollPreview(req, res) {
         irregularSection: isIrregular ? student.irregularSection : [],
         irregularYear: isIrregular ? student.irregularYear : [],
         assigned_sections: assignedSections,
-        available_sections: (sectionGroups.get(`${normalizeText(applicant.year)}::${normalizeSemester(applicant.semester)}`) ?? [])
+        available_sections: (sectionGroups.get(`${normalizeText(chosenSection.year)}::${normalizeSemester(chosenSection.semester)}`) ?? [])
           .map((section) => ({
             year: section.year,
             section: section.section,
@@ -1004,9 +1128,9 @@ export async function batchEnrollFromApplicants(req, res) {
           continue;
         }
 
-        const { applicant, studentNumber } = found;
+        const { applicant, advisingRecord, studentNumber, isAdvisingRecord } = found;
 
-        const existingStudent = await Student.findOne({ studentNumber }).lean();
+        const existingStudent = isAdvisingRecord ? null : await Student.findOne({ studentNumber }).lean();
         if (existingStudent) {
           results.blocked.push({
             applicantID,
@@ -1017,12 +1141,19 @@ export async function batchEnrollFromApplicants(req, res) {
           continue;
         }
 
-        const enrollmentPlan = await prepareEnrollmentPayload({
-          applicant,
-          applicantID,
-          sectionGroups,
-          selectedSection: selectedSections?.[applicantID],
-        });
+        const enrollmentPlan = isAdvisingRecord
+          ? await prepareAdvisingEnrollmentPayload({
+              student: applicant,
+              advisingRecord,
+              sectionGroups,
+              selectedSection: selectedSections?.[applicantID],
+            })
+          : await prepareEnrollmentPayload({
+              applicant,
+              applicantID,
+              sectionGroups,
+              selectedSection: selectedSections?.[applicantID],
+            });
         if (!enrollmentPlan.ok) {
           results.blocked.push({
             applicantID,
@@ -1035,15 +1166,39 @@ export async function batchEnrollFromApplicants(req, res) {
         }
 
         const { student, chosenSection, isIrregular } = enrollmentPlan;
+        const createdStudent = isAdvisingRecord
+          ? await Student.findOneAndUpdate(
+              { studentNumber },
+              {
+                $set: {
+                  year: student.year,
+                  semester: student.semester,
+                  section: student.section,
+                  status: student.status,
+                },
+              },
+              { new: true }
+            )
+          : await Student.create(student);
 
-        const createdStudent = await Student.create(student);
+        if (!createdStudent) {
+          throw new Error(`Student ${studentNumber} was not found during enrollment`);
+        }
 
-        // Update applicant status to "Enrolled" (keep in applicants collection)
-        const Applicant = getDbModel("Applicant", "applicants");
-        await Applicant.updateOne(
-          { _id: applicant._id },
-          { $set: { status: "Enrolled" } }
-        );
+        if (isAdvisingRecord) {
+          const AdvisingRecord = getDbModel("AdvisingRecord", "advisingrecords");
+          await AdvisingRecord.updateOne(
+            { _id: advisingRecord._id },
+            { $set: { enrollmentStatus: "enrolled" } }
+          );
+        } else {
+          // Update applicant status to "Enrolled" (keep in applicants collection)
+          const Applicant = getDbModel("Applicant", "applicants");
+          await Applicant.updateOne(
+            { _id: applicant._id },
+            { $set: { status: "Enrolled" } }
+          );
+        }
 
         // Persist section with correct capacities before syncing
         await Section.findOneAndUpdate(
