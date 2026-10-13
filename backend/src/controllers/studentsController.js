@@ -51,6 +51,7 @@ function toBoolean(value) {
 }
 
 function getApplicantIdentifier(applicant = {}) {
+  applicant = applicant ?? {};
   return String(
     applicant.applicantId ?? applicant.applicantID ?? applicant.applicant_id ?? applicant.applicant_number ?? ""
   ).trim();
@@ -63,6 +64,17 @@ function getApplicantStudentNumber(applicant = {}) {
 
 function normalizeApplicantNumber(value) {
   return String(value ?? "").replace(/\D/g, "");
+}
+
+function applicantIdentifiersMatch(left, right) {
+  const leftDigits = normalizeApplicantNumber(left);
+  const rightDigits = normalizeApplicantNumber(right);
+  if (!leftDigits || !rightDigits) return false;
+  if (leftDigits === rightDigits) return true;
+
+  // Advising IDs may carry a different intake-year prefix than applicant IDs.
+  // In that format, the final four-digit applicant sequence is the stable key.
+  return leftDigits.slice(-4) === rightDigits.slice(-4);
 }
 
 function buildApplicantSearchConditions(applicantID) {
@@ -160,6 +172,16 @@ async function findAdvisingRecordForApplicant(applicantID, applicant) {
   );
   if (conditions.length === 0) return null;
   return AdvisingRecord.findOne({ $or: conditions }).lean();
+}
+
+async function findActiveAdvisingRecordForApplicant(applicantID, applicant) {
+  const AdvisingRecord = getDbModel("AdvisingRecord", "advisingrecords");
+  const applicantIdentifier = getApplicantIdentifier(applicant) || applicantID;
+  const records = await AdvisingRecord.find({
+    enrollmentStatus: { $not: /^enrolled$/i },
+    applicantID: { $exists: true, $ne: null },
+  }).lean();
+  return records.find((record) => applicantIdentifiersMatch(record.applicantID, applicantIdentifier)) ?? null;
 }
 
 async function findAdvisingRecordForStudent(studentNumber) {
@@ -799,74 +821,68 @@ export async function getPendingApplicants(req, res) {
 export async function getApplicantsForEnrollment(req, res) {
   try {
     const AdvisingRecord = getDbModel("AdvisingRecord", "advisingrecords");
-    const [students, advisingRecords] = await Promise.all([
-      Student.find({ studentNumber: { $exists: true, $ne: "" } }).lean(),
+    const [applicants, students, advisingRecords] = await Promise.all([
+      getDbModel("Applicant", "applicants").find(
+        {
+          applicantId: { $exists: true, $ne: null, $ne: "" },
+        },
+        {
+          applicantId: 1,
+          applicantID: 1,
+          applicant_id: 1,
+          applicant_number: 1,
+          firstName: 1,
+          lastName: 1,
+          status: 1,
+        }
+      ).lean(),
+      Student.find(
+        { studentNumber: { $exists: true, $ne: null, $ne: "" } },
+        {
+          studentNumber: 1,
+          firstName: 1,
+          lastName: 1,
+          status: 1,
+        }
+      ).lean(),
       AdvisingRecord.find({
         enrollmentStatus: { $not: /^enrolled$/i },
         applicantID: { $exists: true, $ne: null },
       }).lean(),
     ]);
-    const studentsByNumber = new Map(
-      students.map((student) => [normalizeApplicantNumber(student.studentNumber), student])
-    );
-    const matchedAdvisingStudents = advisingRecords
-      .map((record) => studentsByNumber.get(normalizeApplicantNumber(record.applicantID)))
-      .filter(Boolean);
-    if (matchedAdvisingStudents.length > 0) {
-      await Student.updateMany(
-        { _id: { $in: matchedAdvisingStudents.map((student) => student._id) } },
-        { $set: { status: "Advised" } }
+    const candidates = [];
+    const matchedRecordIds = new Set();
+
+    for (const applicant of applicants) {
+      const advisingRecord = advisingRecords.find((record) =>
+        applicantIdentifiersMatch(record.applicantID, getApplicantIdentifier(applicant))
       );
+      if (!advisingRecord) continue;
+
+      matchedRecordIds.add(String(advisingRecord._id));
+      candidates.push({
+        applicantID: getApplicantIdentifier(applicant),
+        applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim(),
+        status: String(advisingRecord.status ?? applicant.status ?? "").trim(),
+        year: String(advisingRecord.year ?? "").trim(),
+        section: String(advisingRecord.section ?? "").trim(),
+        semester: String(advisingRecord.semester ?? "").trim(),
+        isIrregular: normalizeText(advisingRecord.status).toLowerCase() === "irregular",
+        isAdvisingRecord: true,
+      });
     }
 
-    const advisingCandidates = advisingRecords
-      .map((record) => {
-        const student = studentsByNumber.get(normalizeApplicantNumber(record.applicantID));
-        return student ? formatAdvisingCandidate(student, record) : null;
-      })
-      .filter(Boolean);
+    for (const student of students) {
+      const advisingRecord = advisingRecords.find((record) =>
+        normalizeApplicantNumber(record.applicantID) === normalizeApplicantNumber(student.studentNumber)
+      );
+      if (!advisingRecord || matchedRecordIds.has(String(advisingRecord._id))) continue;
 
-    if (advisingRecords.length > 0) {
-      return res.status(200).json(advisingCandidates);
+      matchedRecordIds.add(String(advisingRecord._id));
+      candidates.push(formatAdvisingCandidate(student, advisingRecord));
     }
 
-    // Keep the existing applicant workflow available when no advising-linked
-    // student records are present.
-    const Applicant = getDbModel("Applicant", "applicants");
-    // Only fetch applicants that have section, year, semester AND status === "Confirmed"
-    const applicants = await Applicant.find(
-       {
-         $and: [
-           { section: { $exists: true, $ne: null, $ne: "" } },
-           { year: { $exists: true, $ne: null, $ne: "" } },
-           { semester: { $exists: true, $ne: null, $ne: "" } },
-           { status: "Confirmed" },
-         ],
-       },
-       {
-         _id: 0,
-         applicantId: 1,
-         firstName: 1,
-         lastName: 1,
-         status: 1,
-         year: 1,
-         section: 1,
-         semester: 1,
-         isIrregular: 1,
-       }
-     ).lean();
-
-    const formattedApplicants = applicants.map((applicant) => ({
-      applicantID: String(applicant.applicantId ?? "").trim(),
-      applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim(),
-      status: String(applicant.status ?? "Pending").trim() || "Pending",
-      year: String(applicant.year ?? "").trim(),
-      section: String(applicant.section ?? "").trim(),
-      semester: String(applicant.semester ?? "").trim(),
-      isIrregular: Boolean(applicant.isIrregular),
-    })).filter((a) => a.applicantID || a.applicant_name || a.status);
-
-    res.status(200).json(formattedApplicants);
+    res.status(200).json(candidates);
   } catch (error) {
     console.error("Error in getApplicantsForEnrollment controller", error);
     res.status(500).json({ message: "Internal server error" });
@@ -1104,14 +1120,23 @@ export async function enrollFromApplicant(req, res) {
  * Helper: find an applicant by ID from the applicants collection.
  */
 async function findApplicantForEnrollment(applicantID) {
-  const advisingCandidate = await findAdvisingCandidate(applicantID);
-  if (advisingCandidate) {
-    return {
-      applicant: advisingCandidate.student,
-      advisingRecord: advisingCandidate.advisingRecord,
-      studentNumber: advisingCandidate.studentNumber,
-      isAdvisingRecord: true,
-    };
+  const advisingRecord = await findActiveAdvisingRecordForApplicant(applicantID, null);
+  if (advisingRecord) {
+    const normalizedAdvisingId = normalizeApplicantNumber(advisingRecord.applicantID);
+    const student = await Student.findOne({
+      studentNumber: {
+        $in: [normalizedAdvisingId, String(advisingRecord.applicantID ?? "").trim()],
+      },
+    }).lean();
+    if (student) {
+      return {
+        applicant: student,
+        advisingRecord,
+        studentNumber: student.studentNumber,
+        isAdvisingRecord: true,
+        hasAdvisingRecord: true,
+      };
+    }
   }
 
   const searchConditions = buildApplicantSearchConditions(applicantID);
@@ -1119,7 +1144,29 @@ async function findApplicantForEnrollment(applicantID) {
   const applicant = await Applicant.findOne({ $or: searchConditions }).lean();
   if (!applicant) return null;
   const { studentNumber } = getEnrollmentIdentityPayload(applicant, applicantID);
-  return { applicant, studentNumber, isAdvisingRecord: false };
+  const applicantAdvisingRecord = await findActiveAdvisingRecordForApplicant(applicantID, applicant);
+  if (applicantAdvisingRecord) {
+    return {
+      applicant,
+      advisingRecord: applicantAdvisingRecord,
+      studentNumber,
+      isAdvisingRecord: false,
+      hasAdvisingRecord: true,
+    };
+  }
+
+  const advisingCandidate = await findAdvisingCandidate(applicantID);
+  if (advisingCandidate) {
+    return {
+      applicant: advisingCandidate.student,
+      advisingRecord: advisingCandidate.advisingRecord,
+      studentNumber: advisingCandidate.studentNumber,
+      isAdvisingRecord: true,
+      hasAdvisingRecord: true,
+    };
+  }
+
+  return null;
 }
 
 export async function batchEnrollPreview(req, res) {
@@ -1137,7 +1184,13 @@ export async function batchEnrollPreview(req, res) {
         preview.notFound.push({ applicantID });
         continue;
       }
-      const { applicant, advisingRecord, studentNumber, isAdvisingRecord } = found;
+      const {
+        applicant,
+        advisingRecord,
+        studentNumber,
+        isAdvisingRecord,
+        hasAdvisingRecord,
+      } = found;
 
       const existingStudent = isAdvisingRecord ? null : await Student.findOne({ studentNumber }).lean();
       if (existingStudent) {
@@ -1150,8 +1203,14 @@ export async function batchEnrollPreview(req, res) {
         continue;
       }
 
-      const enrollmentPlan = isAdvisingRecord
-        ? await prepareAdvisingEnrollmentPayload({ student: applicant, advisingRecord, sectionGroups })
+      const enrollmentPlan = hasAdvisingRecord
+        ? await prepareAdvisingEnrollmentPayload({
+            student: isAdvisingRecord
+              ? applicant
+              : { ...normalizeImportedStudent(applicant), studentNumber },
+            advisingRecord,
+            sectionGroups,
+          })
         : await prepareEnrollmentPayload({ applicant, applicantID, sectionGroups });
       if (!enrollmentPlan.ok) {
         preview.blocked.push({
@@ -1239,7 +1298,13 @@ export async function batchEnrollFromApplicants(req, res) {
           continue;
         }
 
-        const { applicant, advisingRecord, studentNumber, isAdvisingRecord } = found;
+        const {
+          applicant,
+          advisingRecord,
+          studentNumber,
+          isAdvisingRecord,
+          hasAdvisingRecord,
+        } = found;
 
         const existingStudent = isAdvisingRecord ? null : await Student.findOne({ studentNumber }).lean();
         if (existingStudent) {
@@ -1252,9 +1317,11 @@ export async function batchEnrollFromApplicants(req, res) {
           continue;
         }
 
-        const enrollmentPlan = isAdvisingRecord
+        const enrollmentPlan = hasAdvisingRecord
           ? await prepareAdvisingEnrollmentPayload({
-              student: applicant,
+              student: isAdvisingRecord
+                ? applicant
+                : { ...normalizeImportedStudent(applicant), studentNumber },
               advisingRecord,
               sectionGroups,
               selectedSection: selectedSections?.[applicantID],
@@ -1299,13 +1366,14 @@ export async function batchEnrollFromApplicants(req, res) {
           throw new Error(`Student ${studentNumber} was not found during enrollment`);
         }
 
-        if (isAdvisingRecord) {
+        if (hasAdvisingRecord) {
           const AdvisingRecord = getDbModel("AdvisingRecord", "advisingrecords");
           await AdvisingRecord.updateOne(
             { _id: advisingRecord._id },
             { $set: { enrollmentStatus: "enrolled" } }
           );
-        } else {
+        }
+        if (!isAdvisingRecord) {
           // Update applicant status to "Enrolled" (keep in applicants collection)
           const Applicant = getDbModel("Applicant", "applicants");
           await Applicant.updateOne(
