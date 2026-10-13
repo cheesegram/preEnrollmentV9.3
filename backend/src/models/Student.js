@@ -43,6 +43,10 @@ const studentSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    irregularSubjects: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
     // personal information fields
     birthDate: {
       type: String,

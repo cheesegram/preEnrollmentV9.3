@@ -295,6 +295,9 @@ async function prepareAdvisingEnrollmentPayload({ student, advisingRecord, secti
         status: "Irregular",
         irregularSection: irregularMeta.irregularSection,
         irregularYear: irregularMeta.irregularYear,
+        irregularSubjects: Array.isArray(advisingRecord.advisedSubjects)
+          ? advisingRecord.advisedSubjects
+          : [],
       },
       chosenSection,
       isIrregular: true,
@@ -460,6 +463,9 @@ async function prepareEnrollmentPayload({ applicant, applicantID, sectionGroups,
       section: baseSection.section,
       irregularSection: irregularMeta.irregularSection,
       irregularYear: irregularMeta.irregularYear,
+      irregularSubjects: Array.isArray(advisingRecord.advisedSubjects)
+        ? advisingRecord.advisedSubjects
+        : [],
       createdAt: now,
       updatedAt: now,
     };
@@ -1282,6 +1288,7 @@ export async function batchEnrollFromApplicants(req, res) {
                   status: student.status,
                   irregularSection: student.irregularSection ?? [],
                   irregularYear: student.irregularYear ?? [],
+                  irregularSubjects: student.irregularSubjects ?? [],
                 },
               },
               { new: true }
