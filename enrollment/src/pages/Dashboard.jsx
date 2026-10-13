@@ -932,6 +932,7 @@ function Dashboard() {
                                                                     <select
                                                                         value={p.assigned_section || ""}
                                                                         onChange={(event) => handlePreviewSectionChange(p.applicantID, event.target.value)}
+                                                                        disabled={p.status === "Irregular"}
                                                                         className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                                                                         aria-label={`Assigned section for ${p.applicant_name}`}
                                                                     >

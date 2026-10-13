@@ -199,6 +199,7 @@ export async function markStudentsWithActiveAdvisingRecords() {
 }
 
 function formatAdvisingCandidate(student, advisingRecord) {
+  const isIrregular = normalizeText(advisingRecord.status).toLowerCase() === "irregular";
   return {
     applicantID: String(advisingRecord.applicantID ?? "").trim(),
     studentNumber: String(student.studentNumber ?? "").trim(),
@@ -207,7 +208,7 @@ function formatAdvisingCandidate(student, advisingRecord) {
     year: String(advisingRecord.year ?? "").trim(),
     section: String(advisingRecord.section ?? "").trim(),
     semester: String(advisingRecord.semester ?? "").trim(),
-    isIrregular: false,
+    isIrregular,
     isAdvisingRecord: true,
   };
 }
@@ -235,6 +236,72 @@ async function prepareAdvisingEnrollmentPayload({ student, advisingRecord, secti
   }
 
   const enrollmentStatus = normalizeText(advisingRecord.status).toLowerCase();
+  if (enrollmentStatus === "irregular") {
+    const irregularMeta = buildIrregularMetaFromAdvising(advisingRecord, enrollmentSemester);
+    if (!irregularMeta.baseYear || !irregularMeta.baseSection) {
+      return {
+        ok: false,
+        reason: "invalid_advising_record",
+        message: "Enrollment blocked: Advising record must include year and section",
+      };
+    }
+    if (!irregularMeta.subjectIds.length) {
+      return {
+        ok: false,
+        reason: "invalid_advising_record",
+        message: "Enrollment blocked: Advising record has no advised subjects",
+      };
+    }
+
+    for (const placement of irregularMeta.placementsToOccupy) {
+      const targetSection = ensureSectionState(
+        sectionGroups,
+        placement.year,
+        placement.semester,
+        placement.section
+      );
+      if (!sectionHasCapacityForStudent(targetSection, { status: "Irregular" })) {
+        return {
+          ok: false,
+          reason: "section_full",
+          message: `Enrollment blocked: Irregular section ${placement.year}-${placement.section} is full`,
+        };
+      }
+    }
+
+    const chosenSection = ensureSectionState(
+      sectionGroups,
+      irregularMeta.baseYear,
+      enrollmentSemester,
+      irregularMeta.baseSection
+    );
+    for (const placement of irregularMeta.placementsToOccupy) {
+      const targetSection = ensureSectionState(
+        sectionGroups,
+        placement.year,
+        placement.semester,
+        placement.section
+      );
+      addStudentToSectionState(targetSection, "Irregular");
+    }
+
+    return {
+      ok: true,
+      student: {
+        ...student,
+        year: irregularMeta.baseYear,
+        semester: enrollmentSemester,
+        section: chosenSection.section,
+        status: "Irregular",
+        irregularSection: irregularMeta.irregularSection,
+        irregularYear: irregularMeta.irregularYear,
+      },
+      chosenSection,
+      isIrregular: true,
+      irregularMeta,
+    };
+  }
+
   const enrollmentStudent = {
     ...student,
     year: enrollmentYear,
@@ -267,6 +334,7 @@ async function prepareAdvisingEnrollmentPayload({ student, advisingRecord, secti
     },
     chosenSection,
     isIrregular: false,
+    irregularMeta: null,
   };
 }
 
@@ -1212,6 +1280,8 @@ export async function batchEnrollFromApplicants(req, res) {
                   semester: student.semester,
                   section: student.section,
                   status: student.status,
+                  irregularSection: student.irregularSection ?? [],
+                  irregularYear: student.irregularYear ?? [],
                 },
               },
               { new: true }
