@@ -57,6 +57,18 @@ function getApplicantIdentifier(applicant = {}) {
   ).trim();
 }
 
+function formatPersonName(person = {}) {
+  const name = [
+    person.firstName,
+    person.lastName,
+    person.suffix,
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .join(" ");
+  return name || "Unknown";
+}
+
 function getApplicantStudentNumber(applicant = {}) {
   const rawId = getApplicantIdentifier(applicant);
   return rawId.replace(/^A-?/i, "");
@@ -225,7 +237,7 @@ function formatAdvisingCandidate(student, advisingRecord) {
   return {
     applicantID: String(advisingRecord.applicantID ?? "").trim(),
     studentNumber: String(student.studentNumber ?? "").trim(),
-    applicant_name: `${String(student.firstName ?? "").trim()} ${String(student.lastName ?? "").trim()}`.trim(),
+    applicant_name: formatPersonName(student),
     status: String(advisingRecord.status ?? student.status ?? "").trim(),
     year: String(advisingRecord.year ?? "").trim(),
     section: String(advisingRecord.section ?? "").trim(),
@@ -832,7 +844,9 @@ export async function getApplicantsForEnrollment(req, res) {
           applicant_id: 1,
           applicant_number: 1,
           firstName: 1,
+          middleName: 1,
           lastName: 1,
+          suffix: 1,
           status: 1,
         }
       ).lean(),
@@ -841,7 +855,9 @@ export async function getApplicantsForEnrollment(req, res) {
         {
           studentNumber: 1,
           firstName: 1,
+          middleName: 1,
           lastName: 1,
+          suffix: 1,
           status: 1,
         }
       ).lean(),
@@ -862,7 +878,7 @@ export async function getApplicantsForEnrollment(req, res) {
       matchedRecordIds.add(String(advisingRecord._id));
       candidates.push({
         applicantID: getApplicantIdentifier(applicant),
-        applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim(),
+        applicant_name: formatPersonName(applicant),
         status: String(advisingRecord.status ?? applicant.status ?? "").trim(),
         year: String(advisingRecord.year ?? "").trim(),
         section: String(advisingRecord.section ?? "").trim(),
@@ -1196,7 +1212,7 @@ export async function batchEnrollPreview(req, res) {
       if (existingStudent) {
         preview.blocked.push({
           applicantID,
-          applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim() || "Unknown",
+          applicant_name: formatPersonName(applicant),
           studentNumber,
           reason: "student_exists",
         });
@@ -1215,7 +1231,7 @@ export async function batchEnrollPreview(req, res) {
       if (!enrollmentPlan.ok) {
         preview.blocked.push({
           applicantID,
-          applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim() || "Unknown",
+          applicant_name: formatPersonName(applicant),
           studentNumber,
           reason: enrollmentPlan.reason,
           message: enrollmentPlan.message,
@@ -1249,7 +1265,7 @@ export async function batchEnrollPreview(req, res) {
 
       preview.placements.push({
         applicantID,
-        applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim() || "Unknown",
+        applicant_name: formatPersonName(applicant),
         studentNumber,
         assigned_section: chosenSection.section,
         assigned_year: chosenSection.year,
@@ -1310,7 +1326,7 @@ export async function batchEnrollFromApplicants(req, res) {
         if (existingStudent) {
           results.blocked.push({
             applicantID,
-            applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim() || "Unknown",
+            applicant_name: formatPersonName(applicant),
             studentNumber,
             reason: "student_exists",
           });
@@ -1335,7 +1351,7 @@ export async function batchEnrollFromApplicants(req, res) {
         if (!enrollmentPlan.ok) {
           results.blocked.push({
             applicantID,
-            applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim() || "Unknown",
+            applicant_name: formatPersonName(applicant),
             studentNumber,
             reason: enrollmentPlan.reason,
             message: enrollmentPlan.message,
@@ -1403,7 +1419,7 @@ export async function batchEnrollFromApplicants(req, res) {
 
         results.enrolled.push({
           applicantID,
-          applicant_name: `${String(applicant.firstName ?? "").trim()} ${String(applicant.lastName ?? "").trim()}`.trim() || "Unknown",
+          applicant_name: formatPersonName(applicant),
           studentNumber,
           assigned_section: chosenSection.section,
           status: student.status,

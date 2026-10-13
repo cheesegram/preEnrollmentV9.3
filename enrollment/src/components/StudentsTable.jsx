@@ -2,7 +2,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import api from "../lib/axios";
-import { buildScheduleMap, buildStudentScheduleKeys, formatScheduleTimeRange } from "../lib/scheduleUtils";
+import {
+  buildScheduleKey,
+  buildScheduleMap,
+  buildStudentScheduleKeys,
+  formatScheduleTimeRange,
+} from "../lib/scheduleUtils";
 import { getStudentSectionDisplay, getStudentYearDisplay } from "../utils/studentDisplay";
 import Pagination from "./ui/Pagination";
 
@@ -446,7 +451,50 @@ function StudentsTable({
           }
         }
 
-        if (!activeMap || activeMap.size === 0 || scheduleKeys.length === 0) {
+        if (!activeMap || activeMap.size === 0) {
+          setSubjectError("Schedule data is not available yet for this section.");
+          setSubjectLoading(false);
+          return;
+        }
+
+        const irregularSubjects = Array.isArray(student?.irregularSubjects)
+          ? student.irregularSubjects
+          : [];
+        if (String(student?.status ?? "").trim().toLowerCase() === "irregular" && irregularSubjects.length > 0) {
+          const matchedClasses = irregularSubjects.flatMap((irregularSubject) => {
+            const subjectId = String(irregularSubject?.subjectId ?? "").trim();
+            const scheduleKey = buildScheduleKey({
+              year: irregularSubject?.targetYear,
+              semester: irregularSubject?.targetSemester,
+              section: irregularSubject?.targetSection,
+            });
+            if (!subjectId || !scheduleKey) return [];
+
+            const subjectCode = subjectId.toLowerCase();
+            return (activeMap.get(scheduleKey) ?? [])
+              .filter((classEntry) =>
+                String(classEntry?.subjectCode ?? classEntry?.subject_code ?? "").trim().toLowerCase() === subjectCode
+              )
+              .map((classEntry) => ({
+                ...classEntry,
+                day: Array.isArray(classEntry?.days)
+                  ? classEntry.days.filter(Boolean).join(", ")
+                  : classEntry?.day ?? "-",
+              }));
+          });
+
+          if (matchedClasses.length === 0) {
+            setSubjectError("No matching schedule found for the student's irregular subjects.");
+            setSubjectLoading(false);
+            return;
+          }
+
+          setSelectedSubjectSubjects(matchedClasses);
+          setSubjectLoading(false);
+          return;
+        }
+
+        if (scheduleKeys.length === 0) {
           setSubjectError("Schedule data is not available yet for this section.");
           setSubjectLoading(false);
           return;
@@ -1427,10 +1475,10 @@ function StudentsTable({
                           selectedSubjectSubjects.map((cls, index) => (
                             <tr key={index} className="hover:bg-slate-50/80">
                               <td className="px-4 py-3 font-semibold font-mono text-xs text-slate-800">{cls.subjectCode ?? cls.subject_code ?? "-"}</td>
-                              <td className="px-4 py-3 text-slate-700 text-xs font-medium">{cls.day}</td>
+                              <td className="px-4 py-3 text-slate-700 text-xs font-medium">{Array.isArray(cls.days) ? cls.days.join(", ") : cls.day ?? "-"}</td>
                               <td className="px-4 py-3 text-slate-700 text-xs font-medium">{formatScheduleTimeRange(cls.startTime, cls.endTime)}</td>
                               <td className="px-4 py-3 text-slate-700 text-xs">{cls.roomName ?? cls.room_name ?? "-"}</td>
-                              <td className="px-4 py-3 text-slate-700 text-xs">{cls.progName ?? cls.profName ?? "-"}</td>
+                              <td className="px-4 py-3 text-slate-700 text-xs">{cls.profName ?? cls.professor ?? cls.progName ?? "-"}</td>
                             </tr>
                           ))
                         ) : (
