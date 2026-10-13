@@ -22,6 +22,7 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
   const [irregularQuery, setIrregularQuery] = useState("");
   const [selectedIrregularStudent, setSelectedIrregularStudent] = useState(null);
   const [selectedIrregularCurriculum, setSelectedIrregularCurriculum] = useState(null);
+  const [selectedIrregularSubjects, setSelectedIrregularSubjects] = useState([]);
   const [irregularCurriculumLoading, setIrregularCurriculumLoading] = useState(false);
   const [showIrregularModal, setShowIrregularModal] = useState(false);
   const [showIrregularExportModal, setShowIrregularExportModal] = useState(false);
@@ -244,17 +245,48 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
 
     setSelectedIrregularStudent(student);
     setSelectedIrregularCurriculum(null);
+    setSelectedIrregularSubjects([]);
     setShowIrregularModal(true);
 
     try {
       setIrregularCurriculumLoading(true);
-      const res = await api.get(`/curriculum/doc/${encodeURIComponent(docId)}`);
-      setSelectedIrregularCurriculum(res.data ?? null);
+      const [studentCurriculumResult, curriculaResult] = await Promise.allSettled([
+        api.get(`/curriculum/doc/${encodeURIComponent(docId)}`),
+        api.get("/curriculum", {
+          params: { t: Date.now() },
+          headers: { "Cache-Control": "no-cache" },
+        }),
+      ]);
+      const studentCurriculum = studentCurriculumResult.status === "fulfilled"
+        ? studentCurriculumResult.value.data ?? null
+        : null;
+      if (curriculaResult.status !== "fulfilled") {
+        throw curriculaResult.reason;
+      }
+      const subjectIds = new Set(
+        (Array.isArray(student?.irregularSubjects) ? student.irregularSubjects : [])
+          .map((subject) => String(subject?.subjectId ?? "").trim().toLowerCase())
+          .filter(Boolean)
+      );
+      const curriculumSubjects = (Array.isArray(curriculaResult.value.data) ? curriculaResult.value.data : [])
+        .flatMap((curriculum) =>
+          Array.isArray(curriculum?.subjects)
+            ? curriculum.subjects
+            : Array.isArray(curriculum?.semesters)
+              ? curriculum.semesters.flatMap((semester) => semester?.subjects ?? [])
+              : []
+        )
+        .filter((subject) =>
+          subjectIds.has(String(subject?.subject_code ?? "").trim().toLowerCase())
+        );
+      setSelectedIrregularCurriculum(studentCurriculum);
+      setSelectedIrregularSubjects(curriculumSubjects);
     } catch (error) {
       if (error?.response?.status !== 404) {
         toast.error("Failed to load irregular curriculum");
       }
       setSelectedIrregularCurriculum(null);
+      setSelectedIrregularSubjects([]);
     } finally {
       setIrregularCurriculumLoading(false);
     }
@@ -575,6 +607,7 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                 onClick={() => {
                   setShowIrregularModal(false);
                   setSelectedIrregularCurriculum(null);
+                  setSelectedIrregularSubjects([]);
                   setSelectedIrregularStudent(null);
                 }}
                 className="text-gray-400 hover:text-gray-800 bg-white hover:bg-gray-100 rounded-full w-8 h-8 flex items-center justify-center transition-colors"
@@ -589,7 +622,7 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                   <i className="fa-solid fa-circle-notch fa-spin text-3xl text-[#2E522A]"></i>
                   <p className="text-sm font-medium">Loading curriculum...</p>
                 </div>
-              ) : selectedIrregularCurriculum ? (
+              ) : selectedIrregularCurriculum || selectedIrregularSubjects.length > 0 ? (
                 <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                   <table className="min-w-full text-sm border-collapse">
                     <thead className="bg-[#E4F6E2] border-b border-[#BFD9BC] text-[#315B46]">
@@ -603,7 +636,7 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {(selectedIrregularCurriculum.subjects || []).map((subject, idx) => (
+                      {selectedIrregularSubjects.map((subject, idx) => (
                         <tr key={`${subject.subject_code || subject.code || "subject"}-${idx}`} className="hover:bg-gray-50/80">
                           <td className="px-4 py-3 text-gray-800 font-medium whitespace-nowrap">{subject.subject_code || subject.code || "-"}</td>
                           <td className="px-4 py-3 text-gray-700">{subject.title || "-"}</td>
@@ -613,6 +646,13 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                           <td className="px-4 py-3 text-center text-gray-600">{Number(subject.lecture ?? 0) + Number(subject.laboratory ?? 0)}</td>
                         </tr>
                       ))}
+                      {!selectedIrregularSubjects.length && (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
+                            No matching curriculum subjects found for this student.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>

@@ -469,25 +469,31 @@ function StudentsTable({
       // CURRICULUM VIEW
       const isIrregular = String(student?.status ?? "").trim().toLowerCase() === "irregular";
       if (isIrregular) {
-        const curriculumId = String(student?.studentNumber ?? "").trim();
-        if (!curriculumId) {
-          setSubjectError("Student number is required to load this view.");
-          setSubjectLoading(false);
-          return;
-        }
-
-        const response = await api.get(`/curriculum/doc/${encodeURIComponent(curriculumId)}`);
-        const curriculumDoc = response?.data;
-        const subjects = Array.isArray(curriculumDoc?.subjects)
-          ? curriculumDoc.subjects
-          : Array.isArray(curriculumDoc?.semesters)
-            ? curriculumDoc.semesters.flatMap((semester) =>
-              Array.isArray(semester?.subjects) ? semester.subjects : []
-            )
-            : [];
+        const curriculumResponse = await api.get("/curriculum", {
+          params: { t: Date.now() },
+          headers: { "Cache-Control": "no-cache" },
+        });
+        const subjectIds = new Set(
+          (Array.isArray(student?.irregularSubjects) ? student.irregularSubjects : [])
+            .map((subject) => String(subject?.subjectId ?? "").trim().toLowerCase())
+            .filter(Boolean)
+        );
+        const subjects = (Array.isArray(curriculumResponse?.data) ? curriculumResponse.data : [])
+          .flatMap((curriculum) =>
+            Array.isArray(curriculum?.subjects)
+              ? curriculum.subjects
+              : Array.isArray(curriculum?.semesters)
+                ? curriculum.semesters.flatMap((semester) =>
+                  Array.isArray(semester?.subjects) ? semester.subjects : []
+                )
+                : []
+          )
+          .filter((subject) =>
+            subjectIds.has(String(subject?.subject_code ?? "").trim().toLowerCase())
+          );
 
         if (!subjects.length) {
-          setSubjectError("No custom curriculum subjects found for this irregular student.");
+          setSubjectError("No matching curriculum subjects found for this irregular student.");
           setSubjectLoading(false);
           return;
         }
