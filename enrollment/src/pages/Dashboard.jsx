@@ -45,13 +45,18 @@ function Dashboard() {
     const [exportingId, setExportingId] = useState(null);
     const [atPageBottom, setAtPageBottom] = useState(false);
     const [bottomSheetDismissed, setBottomSheetDismissed] = useState(false);
-    const isNewStudent = (student) => String(student.year) === "1" && String(student.semester) === "1st" && student.status !== "Pending";
+    const isDisplayedStudent = (student) => student.status !== "Pending" && student.status !== "Advised";
+    const isNewStudent = (student) =>
+        String(student.year) === "1" &&
+        String(student.semester) === "1st" &&
+        student.status !== "Pending" &&
+        student.status !== "Advised";
 
-    const newStudentsCount = students.filter(isNewStudent).length;
+    const newStudentsCount = students.filter((student) => isDisplayedStudent(student) && isNewStudent(student)).length;
     const blockCount = students.filter(s => s.status === "Block").length;
     const pendingCount = pendingApplicants.length;
     const irregularCount = students.filter(s => s.status === "Irregular").length;
-    const totalCount = students.filter(s => s.status !== "Pending").length;
+    const totalCount = students.filter(isDisplayedStudent).length;
 
     useMemo(() => {
         document.title = "Dashboard - IITI Enrollment System";
@@ -59,7 +64,7 @@ function Dashboard() {
 
     const recentNonPending = React.useMemo(() => {
         return students
-            .filter(s => s.status !== 'Pending')
+            .filter(isDisplayedStudent)
             .slice(0, 100);
     }, [students]);
 
@@ -196,7 +201,7 @@ function Dashboard() {
         } else if (modalTitle === "Irregular Students") {
             result = result.filter(s => s.status === "Irregular");
         } else if (modalTitle === "All Students") {
-            result = result.filter(s => s.status !== "Pending");
+            result = result.filter(isDisplayedStudent);
         }
 
         if (modalQuery) {
@@ -217,7 +222,7 @@ function Dashboard() {
 
     const exportableStudents = useMemo(() => {
         const q = studentExportQuery.trim().toLowerCase();
-        const list = students.filter((s) => s.status !== "Pending");
+        const list = students.filter(isDisplayedStudent);
         if (!q) return list;
 
         return list.filter((s) => {
@@ -232,7 +237,7 @@ function Dashboard() {
     const exportableSections = useMemo(() => {
         const totalsBySectionKey = new Map();
         students
-            .filter((s) => s.status !== "Pending")
+            .filter(isDisplayedStudent)
             .forEach((s) => {
                 const year = String(s.year ?? "").trim();
                 const section = String(s.section ?? "").trim();

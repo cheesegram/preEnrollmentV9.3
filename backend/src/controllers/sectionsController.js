@@ -1,5 +1,6 @@
 import Section from "../models/Section.js";
 import Student from "../models/Student.js";
+import { markStudentsWithActiveAdvisingRecords } from "./studentsController.js";
 import {
   computeActualSectionCounts,
   getSectionCapacities,
@@ -25,6 +26,7 @@ export async function syncSectionsFromStudents(req, res) {
 
 export async function getAllSections(req, res) {
   try {
+    await markStudentsWithActiveAdvisingRecords();
     let sections = await Section.find({}).sort({ year: 1, section: 1, semester: 1 }).lean();
 
     // Self-healing: recompute the TRUE occupant counts from the students

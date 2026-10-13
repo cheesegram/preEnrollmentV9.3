@@ -174,6 +174,30 @@ async function findAdvisingRecordForStudent(studentNumber) {
   return records.find((record) => normalizeApplicantNumber(record.applicantID) === normalizedStudentNumber) ?? null;
 }
 
+export async function markStudentsWithActiveAdvisingRecords() {
+  const AdvisingRecord = getDbModel("AdvisingRecord", "advisingrecords");
+  const [students, advisingRecords] = await Promise.all([
+    Student.find({ studentNumber: { $exists: true, $ne: "" } }, { studentNumber: 1 }).lean(),
+    AdvisingRecord.find({
+      enrollmentStatus: { $not: /^enrolled$/i },
+      applicantID: { $exists: true, $ne: null },
+    }, { applicantID: 1 }).lean(),
+  ]);
+  const studentsByNumber = new Map(
+    students.map((student) => [normalizeApplicantNumber(student.studentNumber), student])
+  );
+  const studentIds = advisingRecords
+    .map((record) => studentsByNumber.get(normalizeApplicantNumber(record.applicantID))?._id)
+    .filter(Boolean);
+
+  if (studentIds.length > 0) {
+    await Student.updateMany(
+      { _id: { $in: studentIds } },
+      { $set: { status: "Advised" } }
+    );
+  }
+}
+
 function formatAdvisingCandidate(student, advisingRecord) {
   return {
     applicantID: String(advisingRecord.applicantID ?? "").trim(),
@@ -215,7 +239,7 @@ async function prepareAdvisingEnrollmentPayload({ student, advisingRecord, secti
     ...student,
     year: enrollmentYear,
     semester: enrollmentSemester,
-    status: enrollmentStatus === "regular" ? "Block" : normalizeText(student.status) || "Block",
+    status: enrollmentStatus === "irregular" ? "Irregular" : "Block",
   };
   const chosenSection = selectedSection
     ? ensureSectionState(sectionGroups, enrollmentYear, enrollmentSemester, selectedSection)
@@ -636,9 +660,12 @@ async function buildSectionGroups() {
 
 export async function getAllStudents(req, res) {
   try {
+    await markStudentsWithActiveAdvisingRecords();
     const { status, year, section, semester } = req.query;
-    const query = {};
-    if (status && status !== 'All students') query.status = status;
+    const query = {
+      $and: [{ status: { $ne: "Advised" } }],
+    };
+    if (status && status !== 'All students') query.$and.push({ status });
     if (year && year !== 'All') {
       const num = Number(year);
       if (!Number.isNaN(num)) {
@@ -708,6 +735,16 @@ export async function getApplicantsForEnrollment(req, res) {
     const studentsByNumber = new Map(
       students.map((student) => [normalizeApplicantNumber(student.studentNumber), student])
     );
+    const matchedAdvisingStudents = advisingRecords
+      .map((record) => studentsByNumber.get(normalizeApplicantNumber(record.applicantID)))
+      .filter(Boolean);
+    if (matchedAdvisingStudents.length > 0) {
+      await Student.updateMany(
+        { _id: { $in: matchedAdvisingStudents.map((student) => student._id) } },
+        { $set: { status: "Advised" } }
+      );
+    }
+
     const advisingCandidates = advisingRecords
       .map((record) => {
         const student = studentsByNumber.get(normalizeApplicantNumber(record.applicantID));

@@ -50,7 +50,7 @@ function StudentList() {
   const isPendingView = selectedStatus === "To Be Enrolled";
 
   const availableSections = useMemo(() => {
-    const nonPending = students.filter((student) => student.status !== "Pending");
+    const nonPending = students.filter((student) => student.status !== "Pending" && student.status !== "Advised");
     const targetYear = selectedYear === "All Year" ? null : YEAR_MAP[selectedYear];
 
     const sections = Array.from(
@@ -77,7 +77,7 @@ function StudentList() {
     let result = [...students];
 
     if (selectedStatus === "All Registered") {
-      result = result.filter((student) => student.status !== "Pending");
+      result = result.filter((student) => student.status !== "Pending" && student.status !== "Advised");
     } else if (!isPendingView) {
       result = result.filter((student) => student.status === selectedStatus);
     }
